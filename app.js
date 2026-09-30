@@ -1,5 +1,9 @@
 /* ============================================================
-   Дневник расходов v3 — счета, долги, постоянные расходы
+   Дневник расходов v5
+   + счета, долги, постоянные расходы
+   + частичные платежи постоянных расходов
+   + soft delete (удалённые категории и постоянные расходы
+     сохраняются в истории и не удаляются физически)
    ============================================================ */
 
 const AMP = String.fromCharCode(38);
@@ -7,7 +11,7 @@ const LS_DATA  = 'expense_diary_data_v1';
 const LS_UI    = 'expense_diary_ui_v1';
 const LS_MONTH = 'expense_diary_month_v1';
 
-// >>> ЗАМЕНИ НА СВОЙ КОНФИГ ИЗ FIREBASE <<<
+// >>> ТВОЙ КОНФИГ FIREBASE <<<
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyBf73zJJP8LxzaOVyssk2wPDPyd0P3iziA",
   authDomain: "manager-6f1c6.firebaseapp.com",
@@ -43,6 +47,8 @@ const state = {
   editingDebt: null,
   editingRecurring: null,
   expandedRecurring: {},
+  showDeletedCats: false,
+  showDeletedRecurring: false,
   newTxn: {
     type: 'expense',
     categoryId: null,
@@ -200,7 +206,7 @@ function defaultCategories() {
     { name: 'Фриланс',       type: 'income',  color: COLORS[8] },
     { name: 'Подарки',       type: 'income',  color: COLORS[9] }
   ];
-  return defs.map(d => ({ id: uid(), name: d.name, type: d.type, color: d.color }));
+  return defs.map(d => ({ id: uid(), name: d.name, type: d.type, color: d.color, deleted: false }));
 }
 
 /* ---------- Нормализация ---------- */
@@ -214,7 +220,8 @@ function normalizeData(d) {
       name: String(a.name || 'Счёт'),
       type: ACCOUNT_TYPES[a.type] ? a.type : 'other',
       color: /^#[0-9a-f]{3,8}$/i.test(a.color) ? a.color : COLORS[3],
-      initialBalance: num(a.initialBalance)
+      initialBalance: num(a.initialBalance),
+      deleted: !!a.deleted
     }));
   }
   if (out.accounts.length === 0) out.accounts = defaultAccounts();
@@ -225,7 +232,8 @@ function normalizeData(d) {
       id: c.id || uid(),
       name: String(c.name || 'Без названия'),
       type: c.type === 'income' ? 'income' : 'expense',
-      color: /^#[0-9a-f]{3,8}$/i.test(c.color) ? c.color : COLORS[0]
+      color: /^#[0-9a-f]{3,8}$/i.test(c.color) ? c.color : COLORS[0],
+      deleted: !!c.deleted
     }));
   }
 
@@ -269,25 +277,63 @@ function normalizeData(d) {
   }
 
   if (Array.isArray(d.recurringExpenses)) {
-    out.recurringExpenses = d.recurringExpenses.map(r => ({
-      id: r.id || uid(),
-      name: String(r.name || 'Платёж'),
-      accountId: r.accountId || defaultAccId,
-      categoryId: r.categoryId || null,
-      amount: num(r.amount),
-      nextDate: /^\d{4}-\d{2}-\d{2}$/.test(r.nextDate) ? r.nextDate : todayISO(),
-      period: PERIOD_LABELS[r.period] ? r.period : 'monthly',
-      history: Array.isArray(r.history) ? r.history.map(h => ({
-        plannedAmount: num(h.plannedAmount),
-        paidAmount: num(h.paidAmount),
-        paidDate: /^\d{4}-\d{2}-\d{2}$/.test(h.paidDate) ? h.paidDate : todayISO(),
-        comment: String(h.comment || '')
-      })) : []
-    }));
+    out.recurringExpenses = d.recurringExpenses.map(r => {
+      const amount = num(r.amount);
+      const item = {
+        id: r.id || uid(),
+        name: String(r.name || 'Платёж'),
+        accountId: r.accountId || defaultAccId,
+        categoryId: r.categoryId || null,
+        amount: amount,
+        remaining: (r.remaining !== undefined && r.remaining !== null) ? num(r.remaining) : amount,
+        nextDate: /^\d{4}-\d{2}-\d{2}$/.test(r.nextDate) ? r.nextDate : todayISO(),
+        period: PERIOD_LABELS[r.period] ? r.period : 'monthly',
+        deleted: !!r.deleted,
+        history: Array.isArray(r.history) ? r.history.map(h => ({
+          plannedAmount: num(h.plannedAmount),
+          paidAmount: num(h.paidAmount),
+          paidDate: /^\d{4}-\d{2}-\d{2}$/.test(h.paidDate) ? h.paidDate : todayISO(),
+          comment: String(h.comment || ''),
+          isPartial: !!h.isPartial,
+          remainingAfter: (h.remainingAfter !== undefined && h.remainingAfter !== null) ? num(h.remainingAfter) : null
+        })) : []
+      };
+      if (!(item.remaining > 0)) item.remaining = amount;
+      return item;
+    });
   }
 
   out.version = num(d.version);
   return out;
+}
+
+/* ---------- Хелперы: категории и счета с учётом deleted ---------- */
+function findCategory(id) {
+  // Находит категорию даже если она удалена (для отображения в истории)
+  if (!id) return null;
+  return state.data.categories.find(c => c.id === id) || null;
+}
+function activeCategories(type) {
+  // Только активные (для выбора в формах, фильтров)
+  return state.data.categories.filter(c => !c.deleted && (!type || c.type === type));
+}
+function deletedCategories() {
+  return state.data.categories.filter(c => c.deleted);
+}
+
+function getAccount(id) { return state.data.accounts.find(a => a.id === id) || null; }
+function activeAccounts() { return state.data.accounts.filter(a => !a.deleted); }
+
+function accountBalance(accId) {
+  const acc = getAccount(accId);
+  if (!acc) return 0;
+  let bal = num(acc.initialBalance);
+  for (const t of state.data.transactions) {
+    if (t.accountId !== accId) continue;
+    if (t.type === 'income') bal += num(t.amount);
+    else bal -= num(t.amount);
+  }
+  return bal;
 }
 
 /* ---------- Разворачивание повторяющихся операций ---------- */
@@ -310,20 +356,6 @@ function getMonthTransactions(ym) {
     }
   }
   return result;
-}
-
-/* ---------- Хелперы счетов ---------- */
-function getAccount(id) { return state.data.accounts.find(a => a.id === id) || null; }
-function accountBalance(accId) {
-  const acc = getAccount(accId);
-  if (!acc) return 0;
-  let bal = num(acc.initialBalance);
-  for (const t of state.data.transactions) {
-    if (t.accountId !== accId) continue;
-    if (t.type === 'income') bal += num(t.amount);
-    else bal -= num(t.amount);
-  }
-  return bal;
 }
 
 /* ---------- Сохранение ---------- */
@@ -439,12 +471,13 @@ function renderDashboard() {
   const byCat = {};
   for (const t of txns) {
     if (t.type !== 'expense') continue;
-    byCat[t.categoryId] = (byCat[t.categoryId] || 0) + num(t.amount);
+    const key = t.categoryId || '__none__';
+    byCat[key] = (byCat[key] || 0) + num(t.amount);
   }
   const catRows = Object.keys(byCat).map(id => {
-    const cat = state.data.categories.find(c => c.id === id);
+    const cat = id === '__none__' ? null : findCategory(id);
     return { cat: cat, sum: byCat[id] };
-  }).filter(x => x.cat).sort((a, b) => b.sum - a.sum);
+  }).sort((a, b) => b.sum - a.sum);
   const maxExp = catRows.length ? catRows[0].sum : 1;
 
   const months = [];
@@ -457,7 +490,7 @@ function renderDashboard() {
   }
   const maxBar = Math.max(1, months.reduce((m, x) => Math.max(m, x.inc, x.exp), 0));
 
-  const accRows = state.data.accounts.map(a => ({ acc: a, balance: accountBalance(a.id) }));
+  const accRows = activeAccounts().map(a => ({ acc: a, balance: accountBalance(a.id) }));
   const totalBalance = accRows.reduce((s, r) => s + r.balance, 0);
 
   el.innerHTML =
@@ -479,14 +512,17 @@ function renderDashboard() {
     '<div class="subhead">Расходы по категориям</div>' +
     (catRows.length === 0
       ? '<div class="empty">Нет расходов в этом месяце</div>'
-      : catRows.map(r =>
-          '<div class="cat-row"><div class="cat-row-head">' +
-            '<span class="dot-color" style="background:' + r.cat.color + '"></span>' +
-            '<span class="cat-name">' + escapeHtml(r.cat.name) + '</span>' +
+      : catRows.map(r => {
+          const name = r.cat ? r.cat.name : 'Без категории';
+          const color = r.cat ? r.cat.color : '#999';
+          const isDel = r.cat && r.cat.deleted;
+          return '<div class="cat-row"><div class="cat-row-head">' +
+            '<span class="dot-color" style="background:' + color + '"></span>' +
+            '<span class="cat-name">' + escapeHtml(name) + (isDel ? ' <span class="badge">удалена</span>' : '') + '</span>' +
             '<span class="cat-sum">' + fmtMoney(r.sum) + '</span>' +
           '</div>' +
-          '<div class="bar"><div class="bar-fill" style="width:' + (r.sum / maxExp * 100).toFixed(1) + '%;background:' + r.cat.color + '"></div></div></div>'
-        ).join('')) +
+          '<div class="bar"><div class="bar-fill" style="width:' + (r.sum / maxExp * 100).toFixed(1) + '%;background:' + color + '"></div></div></div>';
+        }).join('')) +
     '<div class="subhead">Последние 12 месяцев</div>' +
     '<div class="chart">' +
       months.map(m =>
@@ -506,10 +542,15 @@ function renderDashboard() {
 function renderAdd() {
   const el = document.getElementById('addBody');
   const nt = state.newTxn;
-  const cats = state.data.categories.filter(c => c.type === nt.type);
-  const accounts = state.data.accounts;
+  const cats = activeCategories(nt.type);
+  const accounts = activeAccounts();
 
   if (!nt.accountId && accounts.length) nt.accountId = accounts[0].id;
+  // Если текущая выбранная категория удалена — сбросить
+  const currentCat = nt.categoryId ? findCategory(nt.categoryId) : null;
+  if (currentCat && (currentCat.deleted || currentCat.type !== nt.type)) {
+    nt.categoryId = cats.length ? cats[0].id : null;
+  }
   if (!nt.categoryId && cats.length) nt.categoryId = cats[0].id;
 
   el.innerHTML =
@@ -535,7 +576,7 @@ function renderAdd() {
               '<span class="dot-color" style="background:' + c.color + '"></span><span>' + escapeHtml(c.name) + '</span>' +
             '</button>'
           ).join('')
-        : '<div class="empty">Нет категорий. Добавь в разделе «Категории».</div>') +
+        : '<div class="empty">Нет активных категорий. Добавь в разделе «Категории».</div>') +
     '</div>' +
     '<label class="field"><span>Сумма</span><input type="number" inputmode="decimal" step="0.01" min="0" id="ntAmount" value="' + escapeAttr(nt.amount) + '" placeholder="0"></label>' +
     '<label class="field"><span>Дата</span><input type="date" id="ntDate" value="' + escapeAttr(nt.date) + '"></label>' +
@@ -565,6 +606,9 @@ function renderTransactions() {
   }
   const dates = Object.keys(groups).sort((a, b) => b.localeCompare(a));
 
+  // В фильтр-чипах показываем только активные категории
+  const filterCats = activeCategories();
+
   let html = '<div class="filters">' +
     '<button class="chip ' + (f.filterType === 'all' ? 'active' : '') + '" data-act="filter-type" data-v="all">Все</button>' +
     '<button class="chip ' + (f.filterType === 'expense' ? 'active' : '') + '" data-act="filter-type" data-v="expense">Расходы</button>' +
@@ -572,7 +616,7 @@ function renderTransactions() {
   '</div>' +
   '<div class="filters">' +
     '<button class="chip ' + (f.filterCat === 'all' ? 'active' : '') + '" data-act="filter-cat" data-v="all">Все категории</button>' +
-    state.data.categories.map(c =>
+    filterCats.map(c =>
       '<button class="chip ' + (f.filterCat === c.id ? 'active' : '') + '" data-act="filter-cat" data-v="' + c.id + '">' + escapeHtml(c.name) + '</button>'
     ).join('') +
   '</div>' +
@@ -584,9 +628,10 @@ function renderTransactions() {
     for (const d of dates) {
       html += '<div class="day-group"><div class="day-head">' + dateLabel(d) + '</div>';
       for (const t of groups[d]) {
-        const cat = state.data.categories.find(c => c.id === t.categoryId);
-        const catName = cat ? cat.name : '—';
+        const cat = findCategory(t.categoryId);
+        const catName = cat ? cat.name : 'Без категории';
         const catColor = cat ? cat.color : '#999';
+        const catDeleted = cat && cat.deleted;
         const acc = getAccount(t.accountId);
         const accName = acc ? acc.name : '—';
         const accColor = acc ? acc.color : '#999';
@@ -598,6 +643,7 @@ function renderTransactions() {
               '<div class="txn-cat">' +
                 '<span class="dot-color" style="background:' + catColor + '"></span>' +
                 '<span class="ellip">' + escapeHtml(catName) + '</span>' +
+                (catDeleted ? '<span class="badge">категория удалена</span>' : '') +
                 (t.recurring ? '<span class="badge">&#128257;</span>' : '') +
                 (t.isVirtual ? '<span class="badge">(повтор)</span>' : '') +
               '</div>' +
@@ -617,8 +663,11 @@ function renderTransactions() {
 }
 
 function renderTxnEditForm(t) {
-  const cats = state.data.categories.filter(c => c.type === t.type);
-  const accounts = state.data.accounts;
+  const cats = activeCategories(t.type);
+  const accounts = activeAccounts();
+  const currentCat = findCategory(t.categoryId);
+  const currentDeleted = currentCat && currentCat.deleted;
+
   return '<div class="txn" style="display:block">' +
     '<div class="type-toggle">' +
       '<button class="tt-btn ' + (t.type === 'expense' ? 'active exp' : '') + '" data-act="edit-type" data-type="expense" data-id="' + t.id + '">Расход</button>' +
@@ -632,7 +681,9 @@ function renderTxnEditForm(t) {
         '</button>'
       ).join('') +
     '</div>' +
-    '<div class="subhead" style="margin-top:0">Категория</div>' +
+    '<div class="subhead" style="margin-top:0">Категория' +
+      (currentDeleted ? ' <span class="badge">текущая — «' + escapeHtml(currentCat.name) + '» (удалена)</span>' : '') +
+    '</div>' +
     '<div class="cat-grid">' +
       cats.map(c =>
         '<button class="cat-btn ' + (t.categoryId === c.id ? 'active' : '') + '" data-act="edit-txn-cat" data-id="' + t.id + '" data-cat="' + c.id + '" style="--c:' + c.color + '">' +
@@ -654,57 +705,36 @@ function renderTxnEditForm(t) {
 /* ---------- Постоянные расходы ---------- */
 function renderRecurring() {
   const el = document.getElementById('recurringBody');
-  const items = state.data.recurringExpenses;
-  const accounts = state.data.accounts;
-  const cats = state.data.categories.filter(c => c.type === 'expense');
+  const activeItems = state.data.recurringExpenses.filter(r => !r.deleted);
+  const deletedItems = state.data.recurringExpenses.filter(r => r.deleted);
+  const accounts = activeAccounts();
+  const cats = activeCategories('expense');
   const nr = state.newRecurring;
 
   if (!nr.accountId && accounts.length) nr.accountId = accounts[0].id;
 
   let html = '';
 
-  if (items.length === 0) {
+  if (activeItems.length === 0) {
     html += '<div class="empty">Нет постоянных расходов</div>';
   } else {
-    for (const r of items) {
+    for (const r of activeItems) {
       if (state.editingRecurring === r.id) {
         html += renderRecurringEditForm(r, accounts, cats);
         continue;
       }
-      const acc = getAccount(r.accountId);
-      const cat = r.categoryId ? state.data.categories.find(c => c.id === r.categoryId) : null;
-      const expanded = !!state.expandedRecurring[r.id];
-      const isToday = r.nextDate <= todayISO();
-      const periodLabel = PERIOD_LABELS[r.period] || 'Ежемесячно';
+      html += renderRecurringCard(r, false);
+    }
+  }
 
-      html +=
-        '<div class="txn">' +
-          '<div class="txn-cat">' +
-            '<span class="ellip" style="font-weight:600">' + escapeHtml(r.name) + '</span>' +
-            (isToday ? '<span class="badge warn">Срок наступил</span>' : '') +
-          '</div>' +
-          '<div class="txn-amt expense">' + fmtMoney(r.amount) + '</div>' +
-          '<div class="txn-cmt">Счёт: <span class="dot-color" style="background:' + (acc ? acc.color : '#999') + ';margin-right:4px"></span>' + escapeHtml(acc ? acc.name : '—') +
-            (cat ? ' · ' + escapeHtml(cat.name) : '') +
-            ' · ' + periodLabel +
-            ' · след. платёж: ' + dateLabel(r.nextDate) +
-          '</div>' +
-          '<div class="txn-actions">' +
-            '<button class="mini ok" data-act="pay-recurring" data-id="' + r.id + '" title="Оплатить">&#10003;</button>' +
-            '<button class="mini" data-act="toggle-rec-hist" data-id="' + r.id + '" title="История">&#9201;</button>' +
-            '<button class="mini yellow" data-act="edit-recurring" data-id="' + r.id + '" title="Редактировать">&#9998;</button>' +
-            '<button class="mini red" data-act="del-recurring" data-id="' + r.id + '" title="Удалить">&#10005;</button>' +
-          '</div>' +
-          (state.payingRecurring === r.id ? renderRecurringPayForm(r) : '') +
-          (expanded && r.history.length
-            ? '<div style="grid-column:1/-1;margin-top:6px">' +
-                '<div class="subhead" style="margin:6px 0 4px">История платежей</div>' +
-                r.history.slice().reverse().map(h =>
-                  '<div class="history-row"><span>' + dateLabel(h.paidDate) + '</span><span>План: ' + fmtMoney(h.plannedAmount) + ' · Внесено: <b>' + fmtMoney(h.paidAmount) + '</b></span></div>'
-                ).join('') +
-              '</div>'
-            : '') +
-        '</div>';
+  // Удалённые постоянные расходы
+  if (deletedItems.length > 0) {
+    html += '<div class="subhead" style="cursor:pointer" data-act="toggle-deleted-recurring">' +
+      (state.showDeletedRecurring ? '▼' : '▶') + ' Удалённые (' + deletedItems.length + ')</div>';
+    if (state.showDeletedRecurring) {
+      for (const r of deletedItems) {
+        html += renderRecurringCard(r, true);
+      }
     }
   }
 
@@ -741,6 +771,64 @@ function renderRecurring() {
     '<button class="btn primary" data-act="add-recurring">Добавить постоянный расход</button>';
 
   el.innerHTML = html;
+}
+
+function renderRecurringCard(r, isDeleted) {
+  const acc = getAccount(r.accountId);
+  const cat = findCategory(r.categoryId);
+  const expanded = !!state.expandedRecurring[r.id];
+  const isDue = r.nextDate <= todayISO();
+  const periodLabel = PERIOD_LABELS[r.period] || 'Ежемесячно';
+
+  const remaining = (r.remaining !== undefined && r.remaining !== null) ? r.remaining : r.amount;
+  const isPartial = remaining < r.amount;
+  const paidSoFar = r.amount - remaining;
+
+  let actions = '';
+  if (isDeleted) {
+    actions =
+      '<button class="mini ok" data-act="restore-recurring" data-id="' + r.id + '" title="Восстановить">&#8635;</button>' +
+      '<button class="mini" data-act="toggle-rec-hist" data-id="' + r.id + '" title="История">&#9201;</button>';
+  } else {
+    actions =
+      '<button class="mini ok" data-act="pay-recurring" data-id="' + r.id + '" title="Внести платёж">&#10003;</button>' +
+      '<button class="mini" data-act="toggle-rec-hist" data-id="' + r.id + '" title="История">&#9201;</button>' +
+      '<button class="mini yellow" data-act="edit-recurring" data-id="' + r.id + '" title="Редактировать">&#9998;</button>' +
+      '<button class="mini red" data-act="del-recurring" data-id="' + r.id + '" title="Удалить">&#10005;</button>';
+  }
+
+  return '<div class="txn' + (isDeleted ? ' virtual' : '') + '">' +
+    '<div class="txn-cat">' +
+      '<span class="ellip" style="font-weight:600">' + escapeHtml(r.name) + '</span>' +
+      (isDeleted ? '<span class="badge danger">удалён</span>' : '') +
+      (!isDeleted && isDue && !isPartial ? '<span class="badge warn">Срок наступил</span>' : '') +
+      (!isDeleted && isPartial ? '<span class="badge warn">Частично оплачен</span>' : '') +
+    '</div>' +
+    '<div class="txn-amt expense">' + fmtMoney(remaining) +
+      (isPartial ? '<div style="font-size:11px;color:var(--text2);font-weight:400">из ' + fmtMoney(r.amount) + '</div>' : '') +
+    '</div>' +
+    '<div class="txn-cmt">Счёт: <span class="dot-color" style="background:' + (acc ? acc.color : '#999') + ';margin-right:4px"></span>' + escapeHtml(acc ? acc.name : '—') +
+      (cat ? ' · ' + escapeHtml(cat.name) : '') +
+      ' · ' + periodLabel +
+      ' · след. платёж: ' + dateLabel(r.nextDate) +
+      (isPartial ? ' · уже внесено: <b>' + fmtMoney(paidSoFar) + '</b>' : '') +
+    '</div>' +
+    '<div class="txn-actions">' + actions + '</div>' +
+    (state.payingRecurring === r.id ? renderRecurringPayForm(r) : '') +
+    (expanded && r.history.length
+      ? '<div style="grid-column:1/-1;margin-top:6px">' +
+          '<div class="subhead" style="margin:6px 0 4px">История платежей</div>' +
+          r.history.slice().reverse().map(h => {
+            const after = (h.remainingAfter !== null && h.remainingAfter !== undefined && h.isPartial)
+              ? ' · осталось <b>' + fmtMoney(h.remainingAfter) + '</b>'
+              : ' · закрыт';
+            return '<div class="history-row">' +
+              '<span>' + dateLabel(h.paidDate) + (h.isPartial ? ' <span class="badge warn">частично</span>' : '') + '</span>' +
+              '<span>' + fmtMoney(h.paidAmount) + after + '</span>' +
+            '</div>';
+          }).join('') +
+        '</div>'
+      : '');
 }
 
 function renderRecurringEditForm(r, accounts, cats) {
@@ -780,13 +868,23 @@ function renderRecurringEditForm(r, accounts, cats) {
 
 function renderRecurringPayForm(r) {
   const acc = getAccount(r.accountId);
+  const remaining = (r.remaining !== undefined && r.remaining !== null) ? r.remaining : r.amount;
+  const isPartial = remaining < r.amount;
+  const paidSoFar = r.amount - remaining;
   return '<div style="grid-column:1/-1;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:8px">' +
-    '<div style="font-size:12px;color:var(--text2);margin-bottom:6px">Оплата: ' + escapeHtml(r.name) + ' · план ' + fmtMoney(r.amount) + '</div>' +
-    '<label class="field"><span>Фактически внесено</span><input type="number" inputmode="decimal" step="0.01" min="0" id="payRecAmount" value="' + escapeAttr(r.amount) + '"></label>' +
-    '<label class="field"><span>Дата оплаты</span><input type="date" id="payRecDate" value="' + todayISO() + '"></label>' +
+    '<div style="font-size:12px;color:var(--text2);margin-bottom:6px">' +
+      'Оплата: ' + escapeHtml(r.name) + ' · план ' + fmtMoney(r.amount) +
+      (isPartial ? ' · уже внесено ' + fmtMoney(paidSoFar) : '') +
+      ' · <b>осталось ' + fmtMoney(remaining) + '</b>' +
+    '</div>' +
+    '<div style="font-size:11px;color:var(--text2);margin-bottom:8px">' +
+      'Если внесёшь меньше остатка — это будет частичный платёж, дата следующего платежа не сдвинется.' +
+    '</div>' +
+    '<label class="field"><span>Сумма платежа</span><input type="number" inputmode="decimal" step="0.01" min="0" id="payRecAmount" value="' + escapeAttr(remaining) + '"></label>' +
+    '<label class="field"><span>Дата платежа</span><input type="date" id="payRecDate" value="' + todayISO() + '"></label>' +
     '<label class="check"><input type="checkbox" id="payRecAddTxn" checked><span>Добавить операцию в расходы' + (acc ? ' (' + escapeHtml(acc.name) + ')' : '') + '</span></label>' +
     '<div style="display:flex;gap:6px">' +
-      '<button class="btn ok" style="flex:1" data-act="confirm-pay-recurring" data-id="' + r.id + '">Подтвердить оплату</button>' +
+      '<button class="btn ok" style="flex:1" data-act="confirm-pay-recurring" data-id="' + r.id + '">Подтвердить платёж</button>' +
       '<button class="btn" style="flex:1" data-act="cancel-pay-recurring">Отмена</button>' +
     '</div>' +
   '</div>';
@@ -889,7 +987,7 @@ function renderDebtPayForm(d) {
 /* ---------- Счета ---------- */
 function renderAccounts() {
   const el = document.getElementById('accountsBody');
-  const accounts = state.data.accounts;
+  const accounts = activeAccounts();
   const na = state.newAccount;
 
   let html = '';
@@ -968,24 +1066,26 @@ function computeForecast(window) {
   for (let i = window - 1; i >= 0; i--) months.push(addMonths(end, -i));
 
   const sums = {};
-  for (const c of state.data.categories) sums[c.id] = { exp: 0, inc: 0 };
+  for (const c of state.data.categories) sums[c.id] = { exp: 0, inc: 0, __none__: { exp: 0, inc: 0 } };
   for (const ym of months) {
     const txns = getMonthTransactions(ym);
     for (const t of txns) {
-      if (!sums[t.categoryId]) sums[t.categoryId] = { exp: 0, inc: 0 };
-      if (t.type === 'expense') sums[t.categoryId].exp += num(t.amount);
-      else sums[t.categoryId].inc += num(t.amount);
+      const key = t.categoryId || '__none__';
+      if (!sums[key]) sums[key] = { exp: 0, inc: 0 };
+      if (t.type === 'expense') sums[key].exp += num(t.amount);
+      else sums[key].inc += num(t.amount);
     }
   }
 
   const rows = [];
   let totalExp = 0, totalInc = 0;
-  for (const c of state.data.categories) {
-    const s = sums[c.id];
+  for (const key of Object.keys(sums)) {
+    const s = sums[key];
     const avgExp = s.exp / window;
     const avgInc = s.inc / window;
     if (avgExp === 0 && avgInc === 0) continue;
-    rows.push({ cat: c, avgExp, avgInc });
+    const cat = key === '__none__' ? null : findCategory(key);
+    rows.push({ cat, avgExp, avgInc });
     totalExp += avgExp;
     totalInc += avgInc;
   }
@@ -993,6 +1093,7 @@ function computeForecast(window) {
 
   let recurringMonthly = 0;
   for (const r of state.data.recurringExpenses) {
+    if (r.deleted) continue;
     if (r.period === 'monthly') recurringMonthly += r.amount;
     else if (r.period === 'yearly') recurringMonthly += r.amount / 12;
     else if (r.period === 'weekly') recurringMonthly += r.amount * 4.345;
@@ -1021,9 +1122,12 @@ function renderForecast() {
     for (const r of fc.rows) {
       const isExp = r.avgExp >= r.avgInc;
       const perMonth = isExp ? r.avgExp : r.avgInc;
+      const name = r.cat ? r.cat.name : 'Без категории';
+      const color = r.cat ? r.cat.color : '#999';
+      const isDel = r.cat && r.cat.deleted;
       html +=
         '<div class="fc-row">' +
-          '<div class="fc-name"><span class="dot-color" style="background:' + r.cat.color + '"></span><span>' + escapeHtml(r.cat.name) + '</span></div>' +
+          '<div class="fc-name"><span class="dot-color" style="background:' + color + '"></span><span>' + escapeHtml(name) + (isDel ? ' <span class="badge">удалена</span>' : '') + '</span></div>' +
           '<div class="fc-vals">' +
             '<div class="main" style="color:var(--' + (isExp ? 'danger' : 'ok') + ')">' + (isExp ? '−' : '+') + fmtMoney(perMonth) + ' / мес</div>' +
             '<div class="sub">' + (isExp ? '−' : '+') + fmtMoney(perMonth * 12) + ' / год</div>' +
@@ -1053,7 +1157,11 @@ function renderForecast() {
 function renderCategories() {
   const el = document.getElementById('catBody');
   const groups = { expense: [], income: [] };
-  for (const c of state.data.categories) groups[c.type].push(c);
+  for (const c of state.data.categories) {
+    if (c.deleted) continue;
+    groups[c.type].push(c);
+  }
+  const deletedList = deletedCategories();
 
   let html = '';
 
@@ -1081,6 +1189,31 @@ function renderCategories() {
 
   html += renderGroup('expense', 'Расходы');
   html += renderGroup('income', 'Доходы');
+
+  // Удалённые категории
+  if (deletedList.length > 0) {
+    html += '<div class="subhead" style="cursor:pointer" data-act="toggle-deleted-cats">' +
+      (state.showDeletedCats ? '▼' : '▶') + ' Удалённые (' + deletedList.length + ')</div>';
+    if (state.showDeletedCats) {
+      html += '<div class="hint">Удалённые категории не показываются при выборе новых операций, но все старые операции сохраняют их название.</div>';
+      for (const c of deletedList) {
+        const usage = state.data.transactions.filter(t => t.categoryId === c.id).length;
+        html +=
+          '<div class="txn virtual">' +
+            '<div class="txn-cat">' +
+              '<span class="dot-color" style="background:' + c.color + ';opacity:.5"></span>' +
+              '<span class="ellip" style="text-decoration:line-through;opacity:.7">' + escapeHtml(c.name) + '</span>' +
+              '<span class="badge">' + (c.type === 'income' ? 'доход' : 'расход') + '</span>' +
+              (usage > 0 ? '<span class="badge">' + usage + ' операций</span>' : '') +
+            '</div>' +
+            '<div></div>' +
+            '<div class="txn-actions">' +
+              '<button class="mini ok" data-act="restore-cat" data-id="' + c.id + '" title="Восстановить">&#8635;</button>' +
+            '</div>' +
+          '</div>';
+      }
+    }
+  }
 
   html +=
     '<div class="subhead">Новая категория</div>' +
@@ -1162,36 +1295,31 @@ document.addEventListener('click', (e) => {
   if (!t) return;
   const act = t.dataset.act;
 
-  /* Месяц */
   if (act === 'month-prev') { state.currentMonth = addMonths(state.currentMonth, -1); try { localStorage.setItem(LS_MONTH, state.currentMonth); } catch (er) {} renderAll(); return; }
   if (act === 'month-next') { state.currentMonth = addMonths(state.currentMonth, 1); try { localStorage.setItem(LS_MONTH, state.currentMonth); } catch (er) {} renderAll(); return; }
 
-  /* Сворачивание */
   if (act === 'toggle-sec') {
     const key = t.dataset.sec;
     state.ui.collapsed[key] = !state.ui.collapsed[key];
     saveUI(); applyCollapsed(); return;
   }
 
-  /* Форма добавления */
   if (act === 'set-type') { state.newTxn.type = t.dataset.type; state.newTxn.categoryId = null; renderAdd(); return; }
   if (act === 'pick-cat-new') { state.newTxn.categoryId = t.dataset.id; renderAdd(); return; }
   if (act === 'pick-acc-new') { state.newTxn.accountId = t.dataset.id; renderAdd(); return; }
   if (act === 'add-txn') { handleAddTxn(); return; }
 
-  /* Фильтры */
   if (act === 'filter-type') { state.ui.filterType = t.dataset.v; saveUI(); renderTransactions(); return; }
   if (act === 'filter-cat') { state.ui.filterCat = t.dataset.v; saveUI(); renderTransactions(); return; }
 
-  /* Редактирование операции */
   if (act === 'edit-txn') { state.editingTxn = t.dataset.id; renderTransactions(); return; }
   if (act === 'cancel-edit') { state.editingTxn = null; renderTransactions(); return; }
   if (act === 'edit-type') {
     const txn = state.data.transactions.find(x => x.id === t.dataset.id);
     if (!txn) return;
     txn.type = t.dataset.type;
-    const cat = state.data.categories.find(c => c.id === txn.categoryId);
-    if (cat && cat.type !== txn.type) txn.categoryId = null;
+    const cat = findCategory(txn.categoryId);
+    if (cat && (cat.type !== txn.type || cat.deleted)) txn.categoryId = null;
     renderTransactions(); return;
   }
   if (act === 'edit-txn-cat') {
@@ -1207,7 +1335,6 @@ document.addEventListener('click', (e) => {
   if (act === 'save-edit') { handleSaveEdit(t.dataset.id); return; }
   if (act === 'del-txn') { handleDeleteTxn(t.dataset.id); return; }
 
-  /* Прогноз */
   if (act === 'fc-window') { state.ui.forecastWindow = parseInt(t.dataset.n, 10) || 3; saveUI(); renderForecast(); return; }
 
   /* Постоянные расходы */
@@ -1226,6 +1353,8 @@ document.addEventListener('click', (e) => {
   if (act === 'er-period')   { const r = state.data.recurringExpenses.find(x => x.id === t.dataset.id); if (r) { r.period = t.dataset.p; renderRecurring(); } return; }
   if (act === 'save-recurring')   { handleSaveRecurring(t.dataset.id); return; }
   if (act === 'del-recurring')    { handleDeleteRecurring(t.dataset.id); return; }
+  if (act === 'restore-recurring'){ handleRestoreRecurring(t.dataset.id); return; }
+  if (act === 'toggle-deleted-recurring') { state.showDeletedRecurring = !state.showDeletedRecurring; renderRecurring(); return; }
 
   /* Долги */
   if (act === 'nd-dir') { state.newDebt.direction = t.dataset.dir; renderDebts(); return; }
@@ -1259,6 +1388,8 @@ document.addEventListener('click', (e) => {
   if (act === 'edit-cat-color') { const c = state.data.categories.find(x => x.id === t.dataset.id); if (c) { c.color = t.dataset.color; renderCategories(); } return; }
   if (act === 'save-cat') { handleSaveCat(t.dataset.id); return; }
   if (act === 'del-cat')  { handleDeleteCat(t.dataset.id); return; }
+  if (act === 'restore-cat') { handleRestoreCat(t.dataset.id); return; }
+  if (act === 'toggle-deleted-cats') { state.showDeletedCats = !state.showDeletedCats; renderCategories(); return; }
 
   /* Резервная копия */
   if (act === 'export-backup')     { exportBackup(); return; }
@@ -1268,7 +1399,6 @@ document.addEventListener('click', (e) => {
   if (act === 'copy-json')         { copyJsonToClipboard(); return; }
   if (act === 'apply-paste-json')  { applyPasteJson(); return; }
 
-  /* Опасная зона */
   if (act === 'clear-all') { handleClearAll(); return; }
 });
 
@@ -1310,6 +1440,8 @@ async function handleAddTxn() {
   const nt = state.newTxn;
   if (!nt.accountId) { toast('Выбери счёт', 'err'); return; }
   if (!nt.categoryId) { toast('Выбери категорию', 'err'); return; }
+  const cat = findCategory(nt.categoryId);
+  if (!cat || cat.deleted) { toast('Категория недоступна', 'err'); return; }
   const amount = num(nt.amount);
   if (!(amount > 0)) { toast('Укажи сумму больше нуля', 'err'); return; }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(nt.date)) { toast('Укажи дату', 'err'); return; }
@@ -1383,7 +1515,7 @@ async function handleAddAccount() {
   state.data.accounts.push({
     id: uid(), name: na.name.trim(),
     type: na.type || 'other', color: na.color || COLORS[3],
-    initialBalance: num(na.initialBalance)
+    initialBalance: num(na.initialBalance), deleted: false
   });
   state.newAccount = { name:'', type:'cash', color: COLORS[3], initialBalance:'' };
   toast('Счёт добавлен', 'ok');
@@ -1410,13 +1542,12 @@ async function handleDeleteAccount(id) {
   const used = state.data.transactions.filter(t => t.accountId === id).length
              + state.data.recurringExpenses.filter(r => r.accountId === id).length;
   const msg = used > 0
-    ? 'К счёту привязано ' + used + ' операций/платежей. Удалить счёт? Привязки будут сброшены.'
+    ? 'К счёту привязано ' + used + ' операций/платежей. Удалить счёт? Операции останутся с этим счётом в истории.'
     : 'Удалить счёт?';
   if (!confirm(msg)) return;
-  state.data.accounts = state.data.accounts.filter(x => x.id !== id);
-  for (const t of state.data.transactions) if (t.accountId === id) t.accountId = null;
-  for (const r of state.data.recurringExpenses) if (r.accountId === id) r.accountId = null;
-  toast('Удалено', 'ok');
+  // Soft delete: не удаляем физически, чтобы операции сохраняли ссылку
+  a.deleted = true;
+  toast('Счёт удалён', 'ok');
   renderAll();
   await save();
 }
@@ -1426,10 +1557,11 @@ async function handleAddCat() {
   const type = state._newCatType || 'expense';
   const color = state.editingCatColor || COLORS[0];
   if (!name) { toast('Введи название', 'err'); return; }
-  if (state.data.categories.some(c => c.name.toLowerCase() === name.toLowerCase() && c.type === type)) {
+  // Проверяем среди активных
+  if (state.data.categories.some(c => !c.deleted && c.name.toLowerCase() === name.toLowerCase() && c.type === type)) {
     toast('Такая категория уже есть', 'err'); return;
   }
-  state.data.categories.push({ id: uid(), name, type, color });
+  state.data.categories.push({ id: uid(), name, type, color, deleted: false });
   state._newCatName = '';
   state.editingCatColor = COLORS[(state.data.categories.length) % COLORS.length];
   toast('Категория добавлена', 'ok');
@@ -1454,12 +1586,31 @@ async function handleDeleteCat(id) {
   if (!c) return;
   const used = state.data.transactions.filter(t => t.categoryId === id).length;
   const msg = used > 0
-    ? 'У категории ' + used + ' операций. Удалить категорию? Операции останутся без категории.'
-    : 'Удалить категорию?';
+    ? 'У категории ' + used + ' операций. Категория перестанет быть доступна для новых операций, но в истории операций останется как «' + c.name + '». Продолжить?'
+    : 'Удалить категорию «' + c.name + '»? Она перестанет появляться при выборе.';
   if (!confirm(msg)) return;
-  state.data.categories = state.data.categories.filter(x => x.id !== id);
-  for (const t of state.data.transactions) if (t.categoryId === id) t.categoryId = null;
-  toast('Удалено', 'ok');
+
+  // Soft delete
+  c.deleted = true;
+
+  // Если эта категория выбрана в фильтре — сбросить
+  if (state.ui.filterCat === id) {
+    state.ui.filterCat = 'all';
+    saveUI();
+  }
+  // Если выбрана в форме добавления — сбросить
+  if (state.newTxn.categoryId === id) state.newTxn.categoryId = null;
+
+  toast('Категория удалена', 'ok');
+  renderAll();
+  await save();
+}
+
+async function handleRestoreCat(id) {
+  const c = state.data.categories.find(x => x.id === id);
+  if (!c) return;
+  c.deleted = false;
+  toast('Категория восстановлена', 'ok');
   renderAll();
   await save();
 }
@@ -1475,7 +1626,9 @@ async function handleAddRecurring() {
   state.data.recurringExpenses.push({
     id: uid(), name: nr.name.trim(),
     accountId: nr.accountId, categoryId: nr.categoryId || null,
-    amount, nextDate: nr.nextDate, period: nr.period || 'monthly', history: []
+    amount: amount, remaining: amount,
+    nextDate: nr.nextDate, period: nr.period || 'monthly',
+    deleted: false, history: []
   });
   state.newRecurring = { name:'', accountId: nr.accountId, categoryId: null, amount:'', nextDate: todayISO(), period: nr.period };
   toast('Постоянный расход добавлен', 'ok');
@@ -1487,12 +1640,21 @@ async function handleSaveRecurring(id) {
   const r = state.data.recurringExpenses.find(x => x.id === id);
   if (!r) return;
   const name = (document.getElementById('erName').value || '').trim();
-  const amount = num(document.getElementById('erAmount').value);
+  const newAmount = num(document.getElementById('erAmount').value);
   const nextDate = document.getElementById('erNextDate').value;
   if (!name) { toast('Введи название', 'err'); return; }
-  if (!(amount > 0)) { toast('Сумма > 0', 'err'); return; }
+  if (!(newAmount > 0)) { toast('Сумма > 0', 'err'); return; }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) { toast('Некорректная дата', 'err'); return; }
-  r.name = name; r.amount = amount; r.nextDate = nextDate;
+
+  const oldAmount = r.amount;
+  const oldRemaining = (r.remaining !== undefined && r.remaining !== null) ? r.remaining : oldAmount;
+  const alreadyPaid = Math.max(0, oldAmount - oldRemaining);
+  const newRemaining = Math.max(0, newAmount - alreadyPaid);
+
+  r.name = name;
+  r.amount = newAmount;
+  r.remaining = (newRemaining > 0) ? newRemaining : newAmount;
+  r.nextDate = nextDate;
   state.editingRecurring = null;
   toast('Сохранено', 'ok');
   renderAll();
@@ -1502,9 +1664,24 @@ async function handleSaveRecurring(id) {
 async function handleDeleteRecurring(id) {
   const r = state.data.recurringExpenses.find(x => x.id === id);
   if (!r) return;
-  if (!confirm('Удалить постоянный расход «' + r.name + '»? История платежей тоже удалится.')) return;
-  state.data.recurringExpenses = state.data.recurringExpenses.filter(x => x.id !== id);
-  toast('Удалено', 'ok');
+  const histLen = r.history ? r.history.length : 0;
+  const msg = histLen > 0
+    ? 'Удалить постоянный расход «' + r.name + '»? История (' + histLen + ' платежей) сохранится в разделе «Удалённые».'
+    : 'Удалить постоянный расход «' + r.name + '»?';
+  if (!confirm(msg)) return;
+  // Soft delete
+  r.deleted = true;
+  if (state.payingRecurring === id) state.payingRecurring = null;
+  toast('Постоянный расход удалён', 'ok');
+  renderAll();
+  await save();
+}
+
+async function handleRestoreRecurring(id) {
+  const r = state.data.recurringExpenses.find(x => x.id === id);
+  if (!r) return;
+  r.deleted = false;
+  toast('Постоянный расход восстановлен', 'ok');
   renderAll();
   await save();
 }
@@ -1518,31 +1695,59 @@ async function handlePayRecurring(id) {
   if (!(paidAmount > 0)) { toast('Сумма > 0', 'err'); return; }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(paidDate)) { toast('Некорректная дата', 'err'); return; }
 
-  r.history.push({ plannedAmount: r.amount, paidAmount, paidDate, comment: '' });
+  const remainingBefore = (r.remaining !== undefined && r.remaining !== null) ? r.remaining : r.amount;
+  const newRemaining = remainingBefore - paidAmount;
+  const isPartial = newRemaining > 0;
 
   if (addTxn) {
     let categoryId = r.categoryId;
-    if (!categoryId) {
-      let cat = state.data.categories.find(c => c.name.toLowerCase() === 'обязательные' && c.type === 'expense');
-      if (!cat) {
-        cat = { id: uid(), name: 'Обязательные', type: 'expense', color: COLORS[6] };
-        state.data.categories.push(cat);
+    const cat = findCategory(categoryId);
+    if (!cat || cat.deleted) {
+      let oblig = state.data.categories.find(c => !c.deleted && c.name.toLowerCase() === 'обязательные' && c.type === 'expense');
+      if (!oblig) {
+        oblig = { id: uid(), name: 'Обязательные', type: 'expense', color: COLORS[6], deleted: false };
+        state.data.categories.push(oblig);
       }
-      categoryId = cat.id;
+      categoryId = oblig.id;
     }
     state.data.transactions.push({
       id: uid(), categoryId, accountId: r.accountId, type: 'expense',
-      amount: paidAmount, date: paidDate, comment: r.name,
+      amount: paidAmount, date: paidDate,
+      comment: isPartial ? (r.name + ' (частично)') : r.name,
       recurring: false, createdAt: Date.now()
     });
   }
 
-  if (r.period === 'monthly')      r.nextDate = addMonthsISO(r.nextDate, 1);
-  else if (r.period === 'yearly')  r.nextDate = addYearsISO(r.nextDate, 1);
-  else if (r.period === 'weekly')  r.nextDate = addDaysISO(r.nextDate, 7);
+  r.history.push({
+    plannedAmount: r.amount,
+    paidAmount: paidAmount,
+    paidDate: paidDate,
+    comment: '',
+    isPartial: isPartial,
+    remainingAfter: isPartial ? newRemaining : 0
+  });
+
+  if (isPartial) {
+    r.remaining = newRemaining;
+  } else {
+    let overflow = -newRemaining;
+    r.remaining = r.amount;
+    if (r.period === 'monthly')      r.nextDate = addMonthsISO(r.nextDate, 1);
+    else if (r.period === 'yearly')  r.nextDate = addYearsISO(r.nextDate, 1);
+    else if (r.period === 'weekly')  r.nextDate = addDaysISO(r.nextDate, 7);
+
+    while (overflow >= r.amount) {
+      overflow -= r.amount;
+      if (r.period === 'monthly')      r.nextDate = addMonthsISO(r.nextDate, 1);
+      else if (r.period === 'yearly')  r.nextDate = addYearsISO(r.nextDate, 1);
+      else if (r.period === 'weekly')  r.nextDate = addDaysISO(r.nextDate, 7);
+    }
+    if (overflow > 0) r.remaining = Math.max(0, r.amount - overflow);
+    if (r.remaining <= 0) r.remaining = r.amount;
+  }
 
   state.payingRecurring = null;
-  toast('Оплата записана', 'ok');
+  toast(isPartial ? 'Частичный платёж записан' : 'Платёж записан', 'ok');
   renderAll();
   await save();
 }
