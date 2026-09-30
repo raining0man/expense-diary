@@ -9,12 +9,13 @@ const LS_MONTH = 'expense_diary_month_v1';
 
 // >>> ЗАМЕНИ НА СВОЙ КОНФИГ ИЗ FIREBASE <<<
 const FIREBASE_CONFIG = {
-  apiKey: "PASTE_API_KEY",
-  authDomain: "PASTE.firebaseapp.com",
-  projectId: "PASTE",
-  storageBucket: "PASTE.appspot.com",
-  messagingSenderId: "PASTE",
-  appId: "PASTE"
+  piKey: "AIzaSyBf73zJJP8LxzaOVyssk2wPDPyd0P3iziA",
+  authDomain: "manager-6f1c6.firebaseapp.com",
+  projectId: "manager-6f1c6",
+  storageBucket: "manager-6f1c6.firebasestorage.app",
+  messagingSenderId: "806246372105",
+  appId: "1:806246372105:web:f8103cf763c241eacff9d8",
+  measurementId: "G-MCZJ2K8LN9"
 };
 
 const COLORS = ['#e53935','#fb8c00','#fdd835','#43a047','#00897b','#1e88e5',
@@ -35,16 +36,13 @@ const state = {
   syncStatus: 'init',
   currentMonth: loadMonth(),
   ui: loadUI(),
-  // Редактирование
   editingTxn: null,
   editingCat: null,
   editingCatColor: COLORS[0],
   editingAccount: null,
   editingDebt: null,
   editingRecurring: null,
-  // Раскрытие истории платежей у постоянных расходов
   expandedRecurring: {},
-  // Форма добавления операции
   newTxn: {
     type: 'expense',
     categoryId: null,
@@ -54,17 +52,11 @@ const state = {
     comment: '',
     recurring: false
   },
-  // Форма добавления счёта
   newAccount: { name:'', type:'cash', color: COLORS[3], initialBalance:'' },
-  // Форма добавления долга
   newDebt: { direction:'to_me', counterparty:'', amount:'', date: todayISO(), dueDate:'', comment:'' },
-  // Форма добавления постоянного расхода
   newRecurring: { name:'', accountId:null, categoryId:null, amount:'', nextDate: todayISO(), period:'monthly' },
-  // Форма оплаты постоянного расхода
   payingRecurring: null,
-  // Форма платежа по долгу
   payingDebt: null,
-  // UI резервной копии
   _newCatName: '', _newCatType: 'expense',
   _showJson: false, _showPasteJson: false, _pasteJsonValue: ''
 };
@@ -193,9 +185,7 @@ function renderVersion() {
 
 /* ---------- Дефолтные данные ---------- */
 function defaultAccounts() {
-  return [
-    { id: uid(), name: 'Основной', type: 'cash', color: COLORS[3], initialBalance: 0 }
-  ];
+  return [{ id: uid(), name: 'Основной', type: 'cash', color: COLORS[3], initialBalance: 0 }];
 }
 function defaultCategories() {
   const defs = [
@@ -213,7 +203,7 @@ function defaultCategories() {
   return defs.map(d => ({ id: uid(), name: d.name, type: d.type, color: d.color }));
 }
 
-/* ---------- Нормализация / миграция ---------- */
+/* ---------- Нормализация ---------- */
 function normalizeData(d) {
   const out = { accounts: [], categories: [], transactions: [], debts: [], recurringExpenses: [], version: 0 };
   if (!d || typeof d !== 'object') d = {};
@@ -227,7 +217,6 @@ function normalizeData(d) {
       initialBalance: num(a.initialBalance)
     }));
   }
-  // Гарантируем наличие хотя бы одного счёта, если есть транзакции без accountId
   if (out.accounts.length === 0) out.accounts = defaultAccounts();
   const defaultAccId = out.accounts[0].id;
 
@@ -323,11 +312,8 @@ function getMonthTransactions(ym) {
   return result;
 }
 
-/* ---------- Хелперы по счетам ---------- */
+/* ---------- Хелперы счетов ---------- */
 function getAccount(id) { return state.data.accounts.find(a => a.id === id) || null; }
-function accountName(id) { const a = getAccount(id); return a ? a.name : '—'; }
-function accountColor(id) { const a = getAccount(id); return a ? a.color : '#999'; }
-
 function accountBalance(accId) {
   const acc = getAccount(accId);
   if (!acc) return 0;
@@ -467,14 +453,11 @@ function renderDashboard() {
     const t = getMonthTransactions(ym);
     const inc = t.filter(x => x.type === 'income').reduce((s, x) => s + num(x.amount), 0);
     const exp = t.filter(x => x.type === 'expense').reduce((s, x) => s + num(x.amount), 0);
-    months.push({ ym: ym, inc: inc, exp: exp });
+    months.push({ ym, inc, exp });
   }
   const maxBar = Math.max(1, months.reduce((m, x) => Math.max(m, x.inc, x.exp), 0));
 
-  // Балансы по счетам
-  const accRows = state.data.accounts.map(a => ({
-    acc: a, balance: accountBalance(a.id)
-  }));
+  const accRows = state.data.accounts.map(a => ({ acc: a, balance: accountBalance(a.id) }));
   const totalBalance = accRows.reduce((s, r) => s + r.balance, 0);
 
   el.innerHTML =
@@ -486,27 +469,23 @@ function renderDashboard() {
     '<div class="card" style="margin-bottom:10px"><div class="stat-label">Общий баланс по счетам</div><div class="stat-val" style="font-size:18px">' + fmtMoney(totalBalance) + '</div></div>' +
     (accRows.length
       ? accRows.map(r =>
-          '<div class="cat-row">' +
-            '<div class="cat-row-head">' +
-              '<span class="dot-color" style="background:' + r.acc.color + '"></span>' +
-              '<span class="cat-name">' + escapeHtml(r.acc.name) + '</span>' +
-              '<span class="cat-sum" style="color:var(--' + (r.balance >= 0 ? 'ok' : 'danger') + ')">' + fmtMoney(r.balance) + '</span>' +
-            '</div>' +
-          '</div>'
+          '<div class="cat-row"><div class="cat-row-head">' +
+            '<span class="dot-color" style="background:' + r.acc.color + '"></span>' +
+            '<span class="cat-name">' + escapeHtml(r.acc.name) + '</span>' +
+            '<span class="cat-sum" style="color:var(--' + (r.balance >= 0 ? 'ok' : 'danger') + ')">' + fmtMoney(r.balance) + '</span>' +
+          '</div></div>'
         ).join('')
       : '') +
     '<div class="subhead">Расходы по категориям</div>' +
     (catRows.length === 0
       ? '<div class="empty">Нет расходов в этом месяце</div>'
       : catRows.map(r =>
-          '<div class="cat-row">' +
-            '<div class="cat-row-head">' +
-              '<span class="dot-color" style="background:' + r.cat.color + '"></span>' +
-              '<span class="cat-name">' + escapeHtml(r.cat.name) + '</span>' +
-              '<span class="cat-sum">' + fmtMoney(r.sum) + '</span>' +
-            '</div>' +
-            '<div class="bar"><div class="bar-fill" style="width:' + (r.sum / maxExp * 100).toFixed(1) + '%;background:' + r.cat.color + '"></div></div>' +
-          '</div>'
+          '<div class="cat-row"><div class="cat-row-head">' +
+            '<span class="dot-color" style="background:' + r.cat.color + '"></span>' +
+            '<span class="cat-name">' + escapeHtml(r.cat.name) + '</span>' +
+            '<span class="cat-sum">' + fmtMoney(r.sum) + '</span>' +
+          '</div>' +
+          '<div class="bar"><div class="bar-fill" style="width:' + (r.sum / maxExp * 100).toFixed(1) + '%;background:' + r.cat.color + '"></div></div></div>'
         ).join('')) +
     '<div class="subhead">Последние 12 месяцев</div>' +
     '<div class="chart">' +
@@ -523,14 +502,13 @@ function renderDashboard() {
     '<div class="legend"><span><i class="lg inc"></i>Доходы</span><span><i class="lg exp"></i>Расходы</span></div>';
 }
 
-/* ---------- Форма добавления операции ---------- */
+/* ---------- Форма добавления ---------- */
 function renderAdd() {
   const el = document.getElementById('addBody');
   const nt = state.newTxn;
   const cats = state.data.categories.filter(c => c.type === nt.type);
   const accounts = state.data.accounts;
 
-  // Автовыбор счёта и категории по умолчанию
   if (!nt.accountId && accounts.length) nt.accountId = accounts[0].id;
   if (!nt.categoryId && cats.length) nt.categoryId = cats[0].id;
 
@@ -544,8 +522,7 @@ function renderAdd() {
       (accounts.length
         ? accounts.map(a =>
             '<button class="cat-btn ' + (nt.accountId === a.id ? 'active' : '') + '" data-act="pick-acc-new" data-id="' + a.id + '" style="--c:' + a.color + '">' +
-              '<span class="dot-color" style="background:' + a.color + '"></span>' +
-              '<span>' + escapeHtml(a.name) + '</span>' +
+              '<span class="dot-color" style="background:' + a.color + '"></span><span>' + escapeHtml(a.name) + '</span>' +
             '</button>'
           ).join('')
         : '<div class="empty">Нет счетов. Добавь в разделе «Счета».</div>') +
@@ -555,21 +532,15 @@ function renderAdd() {
       (cats.length
         ? cats.map(c =>
             '<button class="cat-btn ' + (nt.categoryId === c.id ? 'active' : '') + '" data-act="pick-cat-new" data-id="' + c.id + '" style="--c:' + c.color + '">' +
-              '<span class="dot-color" style="background:' + c.color + '"></span>' +
-              '<span>' + escapeHtml(c.name) + '</span>' +
+              '<span class="dot-color" style="background:' + c.color + '"></span><span>' + escapeHtml(c.name) + '</span>' +
             '</button>'
           ).join('')
         : '<div class="empty">Нет категорий. Добавь в разделе «Категории».</div>') +
     '</div>' +
-    '<label class="field"><span>Сумма</span>' +
-      '<input type="number" inputmode="decimal" step="0.01" min="0" id="ntAmount" value="' + escapeAttr(nt.amount) + '" placeholder="0"></label>' +
-    '<label class="field"><span>Дата</span>' +
-      '<input type="date" id="ntDate" value="' + escapeAttr(nt.date) + '"></label>' +
-    '<label class="field"><span>Комментарий</span>' +
-      '<input type="text" id="ntComment" value="' + escapeAttr(nt.comment) + '" placeholder="необязательно"></label>' +
-    '<label class="check">' +
-      '<input type="checkbox" id="ntRecurring" ' + (nt.recurring ? 'checked' : '') + '>' +
-      '<span>Повторять ежемесячно</span></label>' +
+    '<label class="field"><span>Сумма</span><input type="number" inputmode="decimal" step="0.01" min="0" id="ntAmount" value="' + escapeAttr(nt.amount) + '" placeholder="0"></label>' +
+    '<label class="field"><span>Дата</span><input type="date" id="ntDate" value="' + escapeAttr(nt.date) + '"></label>' +
+    '<label class="field"><span>Комментарий</span><input type="text" id="ntComment" value="' + escapeAttr(nt.comment) + '" placeholder="необязательно"></label>' +
+    '<label class="check"><input type="checkbox" id="ntRecurring" ' + (nt.recurring ? 'checked' : '') + '><span>Повторять ежемесячно</span></label>' +
     '<button class="btn primary" data-act="add-txn">Добавить</button>';
 }
 
@@ -611,8 +582,7 @@ function renderTransactions() {
     html += '<div class="empty">Нет операций по фильтру</div>';
   } else {
     for (const d of dates) {
-      html += '<div class="day-group">';
-      html += '<div class="day-head">' + dateLabel(d) + '</div>';
+      html += '<div class="day-group"><div class="day-head">' + dateLabel(d) + '</div>';
       for (const t of groups[d]) {
         const cat = state.data.categories.find(c => c.id === t.categoryId);
         const catName = cat ? cat.name : '—';
@@ -658,29 +628,22 @@ function renderTxnEditForm(t) {
     '<div class="cat-grid">' +
       accounts.map(a =>
         '<button class="cat-btn ' + (t.accountId === a.id ? 'active' : '') + '" data-act="edit-txn-acc" data-id="' + t.id + '" data-acc="' + a.id + '" style="--c:' + a.color + '">' +
-          '<span class="dot-color" style="background:' + a.color + '"></span>' +
-          '<span>' + escapeHtml(a.name) + '</span>' +
+          '<span class="dot-color" style="background:' + a.color + '"></span><span>' + escapeHtml(a.name) + '</span>' +
         '</button>'
       ).join('') +
     '</div>' +
     '<div class="subhead" style="margin-top:0">Категория</div>' +
     '<div class="cat-grid">' +
       cats.map(c =>
-        '<button class="cat-btn ' + (t.categoryId === c.id ? 'active' : '') + '" data-act="edit-cat" data-id="' + t.id + '" data-cat="' + c.id + '" style="--c:' + c.color + '">' +
-          '<span class="dot-color" style="background:' + c.color + '"></span>' +
-          '<span>' + escapeHtml(c.name) + '</span>' +
+        '<button class="cat-btn ' + (t.categoryId === c.id ? 'active' : '') + '" data-act="edit-txn-cat" data-id="' + t.id + '" data-cat="' + c.id + '" style="--c:' + c.color + '">' +
+          '<span class="dot-color" style="background:' + c.color + '"></span><span>' + escapeHtml(c.name) + '</span>' +
         '</button>'
       ).join('') +
     '</div>' +
-    '<label class="field"><span>Сумма</span>' +
-      '<input type="number" inputmode="decimal" step="0.01" min="0" id="editAmount" value="' + escapeAttr(t.amount) + '"></label>' +
-    '<label class="field"><span>Дата</span>' +
-      '<input type="date" id="editDate" value="' + escapeAttr(t.date) + '"></label>' +
-    '<label class="field"><span>Комментарий</span>' +
-      '<input type="text" id="editComment" value="' + escapeAttr(t.comment) + '"></label>' +
-    '<label class="check">' +
-      '<input type="checkbox" id="editRecurring" ' + (t.recurring ? 'checked' : '') + '>' +
-      '<span>Повторять ежемесячно</span></label>' +
+    '<label class="field"><span>Сумма</span><input type="number" inputmode="decimal" step="0.01" min="0" id="editAmount" value="' + escapeAttr(t.amount) + '"></label>' +
+    '<label class="field"><span>Дата</span><input type="date" id="editDate" value="' + escapeAttr(t.date) + '"></label>' +
+    '<label class="field"><span>Комментарий</span><input type="text" id="editComment" value="' + escapeAttr(t.comment) + '"></label>' +
+    '<label class="check"><input type="checkbox" id="editRecurring" ' + (t.recurring ? 'checked' : '') + '><span>Повторять ежемесячно</span></label>' +
     '<div style="display:flex;gap:6px">' +
       '<button class="btn ok" style="flex:1" data-act="save-edit" data-id="' + t.id + '">Сохранить</button>' +
       '<button class="btn" style="flex:1" data-act="cancel-edit">Отмена</button>' +
@@ -721,8 +684,7 @@ function renderRecurring() {
             (isToday ? '<span class="badge warn">Срок наступил</span>' : '') +
           '</div>' +
           '<div class="txn-amt expense">' + fmtMoney(r.amount) + '</div>' +
-          '<div class="txn-cmt">' +
-            'Счёт: <span class="dot-color" style="background:' + (acc ? acc.color : '#999') + ';margin-right:4px"></span>' + escapeHtml(acc ? acc.name : '—') +
+          '<div class="txn-cmt">Счёт: <span class="dot-color" style="background:' + (acc ? acc.color : '#999') + ';margin-right:4px"></span>' + escapeHtml(acc ? acc.name : '—') +
             (cat ? ' · ' + escapeHtml(cat.name) : '') +
             ' · ' + periodLabel +
             ' · след. платёж: ' + dateLabel(r.nextDate) +
@@ -738,10 +700,7 @@ function renderRecurring() {
             ? '<div style="grid-column:1/-1;margin-top:6px">' +
                 '<div class="subhead" style="margin:6px 0 4px">История платежей</div>' +
                 r.history.slice().reverse().map(h =>
-                  '<div class="history-row">' +
-                    '<span>' + dateLabel(h.paidDate) + '</span>' +
-                    '<span>План: ' + fmtMoney(h.plannedAmount) + ' · Внесено: <b>' + fmtMoney(h.paidAmount) + '</b></span>' +
-                  '</div>'
+                  '<div class="history-row"><span>' + dateLabel(h.paidDate) + '</span><span>План: ' + fmtMoney(h.plannedAmount) + ' · Внесено: <b>' + fmtMoney(h.paidAmount) + '</b></span></div>'
                 ).join('') +
               '</div>'
             : '') +
@@ -751,35 +710,28 @@ function renderRecurring() {
 
   html +=
     '<div class="subhead">Новый постоянный расход</div>' +
-    '<label class="field"><span>Название</span>' +
-      '<input type="text" id="nrName" value="' + escapeAttr(nr.name) + '" placeholder="Например, Интернет"></label>' +
+    '<label class="field"><span>Название</span><input type="text" id="nrName" value="' + escapeAttr(nr.name) + '" placeholder="Например, Интернет"></label>' +
     '<div class="subhead" style="margin-top:0">Счёт списания</div>' +
     '<div class="cat-grid">' +
       (accounts.length
         ? accounts.map(a =>
             '<button class="cat-btn ' + (nr.accountId === a.id ? 'active' : '') + '" data-act="nr-pick-acc" data-id="' + a.id + '" style="--c:' + a.color + '">' +
-              '<span class="dot-color" style="background:' + a.color + '"></span>' +
-              '<span>' + escapeHtml(a.name) + '</span>' +
+              '<span class="dot-color" style="background:' + a.color + '"></span><span>' + escapeHtml(a.name) + '</span>' +
             '</button>'
           ).join('')
         : '<div class="empty">Сначала создай счёт</div>') +
     '</div>' +
     '<div class="subhead" style="margin-top:0">Категория (опционально)</div>' +
     '<div class="cat-grid">' +
-      '<button class="cat-btn ' + (!nr.categoryId ? 'active-simple' : '') + '" data-act="nr-pick-cat" data-id="">' +
-        '<span>Без категории</span>' +
-      '</button>' +
+      '<button class="cat-btn ' + (!nr.categoryId ? 'active-simple' : '') + '" data-act="nr-pick-cat" data-id=""><span>Без категории</span></button>' +
       cats.map(c =>
         '<button class="cat-btn ' + (nr.categoryId === c.id ? 'active' : '') + '" data-act="nr-pick-cat" data-id="' + c.id + '" style="--c:' + c.color + '">' +
-          '<span class="dot-color" style="background:' + c.color + '"></span>' +
-          '<span>' + escapeHtml(c.name) + '</span>' +
+          '<span class="dot-color" style="background:' + c.color + '"></span><span>' + escapeHtml(c.name) + '</span>' +
         '</button>'
       ).join('') +
     '</div>' +
-    '<label class="field"><span>Сумма (плановая)</span>' +
-      '<input type="number" inputmode="decimal" step="0.01" min="0" id="nrAmount" value="' + escapeAttr(nr.amount) + '" placeholder="0"></label>' +
-    '<label class="field"><span>Дата первого/следующего платежа</span>' +
-      '<input type="date" id="nrNextDate" value="' + escapeAttr(nr.nextDate) + '"></label>' +
+    '<label class="field"><span>Сумма (плановая)</span><input type="number" inputmode="decimal" step="0.01" min="0" id="nrAmount" value="' + escapeAttr(nr.amount) + '" placeholder="0"></label>' +
+    '<label class="field"><span>Дата первого/следующего платежа</span><input type="date" id="nrNextDate" value="' + escapeAttr(nr.nextDate) + '"></label>' +
     '<div class="subhead" style="margin-top:0">Периодичность</div>' +
     '<div class="filters">' +
       ['monthly','yearly','weekly','once'].map(p =>
@@ -793,33 +745,26 @@ function renderRecurring() {
 
 function renderRecurringEditForm(r, accounts, cats) {
   return '<div class="txn" style="display:block">' +
-    '<label class="field"><span>Название</span>' +
-      '<input type="text" id="erName" value="' + escapeAttr(r.name) + '"></label>' +
+    '<label class="field"><span>Название</span><input type="text" id="erName" value="' + escapeAttr(r.name) + '"></label>' +
     '<div class="subhead" style="margin-top:0">Счёт списания</div>' +
     '<div class="cat-grid">' +
       accounts.map(a =>
         '<button class="cat-btn ' + (r.accountId === a.id ? 'active' : '') + '" data-act="er-pick-acc" data-id="' + r.id + '" data-acc="' + a.id + '" style="--c:' + a.color + '">' +
-          '<span class="dot-color" style="background:' + a.color + '"></span>' +
-          '<span>' + escapeHtml(a.name) + '</span>' +
+          '<span class="dot-color" style="background:' + a.color + '"></span><span>' + escapeHtml(a.name) + '</span>' +
         '</button>'
       ).join('') +
     '</div>' +
     '<div class="subhead" style="margin-top:0">Категория</div>' +
     '<div class="cat-grid">' +
-      '<button class="cat-btn ' + (!r.categoryId ? 'active-simple' : '') + '" data-act="er-pick-cat" data-id="' + r.id + '" data-cat="">' +
-        '<span>Без категории</span>' +
-      '</button>' +
+      '<button class="cat-btn ' + (!r.categoryId ? 'active-simple' : '') + '" data-act="er-pick-cat" data-id="' + r.id + '" data-cat=""><span>Без категории</span></button>' +
       cats.map(c =>
         '<button class="cat-btn ' + (r.categoryId === c.id ? 'active' : '') + '" data-act="er-pick-cat" data-id="' + r.id + '" data-cat="' + c.id + '" style="--c:' + c.color + '">' +
-          '<span class="dot-color" style="background:' + c.color + '"></span>' +
-          '<span>' + escapeHtml(c.name) + '</span>' +
+          '<span class="dot-color" style="background:' + c.color + '"></span><span>' + escapeHtml(c.name) + '</span>' +
         '</button>'
       ).join('') +
     '</div>' +
-    '<label class="field"><span>Сумма (плановая)</span>' +
-      '<input type="number" inputmode="decimal" step="0.01" min="0" id="erAmount" value="' + escapeAttr(r.amount) + '"></label>' +
-    '<label class="field"><span>Дата следующего платежа</span>' +
-      '<input type="date" id="erNextDate" value="' + escapeAttr(r.nextDate) + '"></label>' +
+    '<label class="field"><span>Сумма (плановая)</span><input type="number" inputmode="decimal" step="0.01" min="0" id="erAmount" value="' + escapeAttr(r.amount) + '"></label>' +
+    '<label class="field"><span>Дата следующего платежа</span><input type="date" id="erNextDate" value="' + escapeAttr(r.nextDate) + '"></label>' +
     '<div class="subhead" style="margin-top:0">Периодичность</div>' +
     '<div class="filters">' +
       ['monthly','yearly','weekly','once'].map(p =>
@@ -837,13 +782,9 @@ function renderRecurringPayForm(r) {
   const acc = getAccount(r.accountId);
   return '<div style="grid-column:1/-1;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:8px">' +
     '<div style="font-size:12px;color:var(--text2);margin-bottom:6px">Оплата: ' + escapeHtml(r.name) + ' · план ' + fmtMoney(r.amount) + '</div>' +
-    '<label class="field"><span>Фактически внесено</span>' +
-      '<input type="number" inputmode="decimal" step="0.01" min="0" id="payRecAmount" value="' + escapeAttr(r.amount) + '"></label>' +
-    '<label class="field"><span>Дата оплаты</span>' +
-      '<input type="date" id="payRecDate" value="' + todayISO() + '"></label>' +
-    '<label class="check">' +
-      '<input type="checkbox" id="payRecAddTxn" checked>' +
-      '<span>Добавить операцию в расходы' + (acc ? ' (' + escapeHtml(acc.name) + ')' : '') + '</span></label>' +
+    '<label class="field"><span>Фактически внесено</span><input type="number" inputmode="decimal" step="0.01" min="0" id="payRecAmount" value="' + escapeAttr(r.amount) + '"></label>' +
+    '<label class="field"><span>Дата оплаты</span><input type="date" id="payRecDate" value="' + todayISO() + '"></label>' +
+    '<label class="check"><input type="checkbox" id="payRecAddTxn" checked><span>Добавить операцию в расходы' + (acc ? ' (' + escapeHtml(acc.name) + ')' : '') + '</span></label>' +
     '<div style="display:flex;gap:6px">' +
       '<button class="btn ok" style="flex:1" data-act="confirm-pay-recurring" data-id="' + r.id + '">Подтвердить оплату</button>' +
       '<button class="btn" style="flex:1" data-act="cancel-pay-recurring">Отмена</button>' +
@@ -860,15 +801,9 @@ function renderDebts() {
   const renderList = (direction, title) => {
     const list = debts.filter(d => d.direction === direction);
     let s = '<div class="subhead">' + title + '</div>';
-    if (list.length === 0) {
-      s += '<div class="empty">Пусто</div>';
-      return s;
-    }
+    if (list.length === 0) { s += '<div class="empty">Пусто</div>'; return s; }
     for (const d of list) {
-      if (state.editingDebt === d.id) {
-        s += renderDebtEditForm(d);
-        continue;
-      }
+      if (state.editingDebt === d.id) { s += renderDebtEditForm(d); continue; }
       const remain = d.amount - d.paid;
       const pct = d.amount > 0 ? Math.min(100, d.paid / d.amount * 100) : 0;
       const closed = d.closed || remain <= 0;
@@ -879,10 +814,7 @@ function renderDebts() {
             (closed ? '<span class="badge ok">Закрыт</span>' : '<span class="badge warn">Открыт</span>') +
           '</div>' +
           '<div class="txn-amt ' + (direction === 'to_me' ? 'income' : 'expense') + '">' + fmtMoney(remain) + '</div>' +
-          '<div class="txn-cmt">' +
-            'Всего: ' + fmtMoney(d.amount) +
-            ' · оплачено: ' + fmtMoney(d.paid) +
-            ' · с ' + dateLabel(d.date) +
+          '<div class="txn-cmt">Всего: ' + fmtMoney(d.amount) + ' · оплачено: ' + fmtMoney(d.paid) + ' · с ' + dateLabel(d.date) +
             (d.dueDate ? ' · срок ' + dateLabel(d.dueDate) : '') +
             (d.comment ? '<br>' + escapeHtml(d.comment) : '') +
           '</div>' +
@@ -916,16 +848,11 @@ function renderDebts() {
       '<button class="tt-btn ' + (nd.direction === 'to_me' ? 'active inc' : '') + '" data-act="nd-dir" data-dir="to_me">Мне должны</button>' +
       '<button class="tt-btn ' + (nd.direction === 'from_me' ? 'active exp' : '') + '" data-act="nd-dir" data-dir="from_me">Я должен</button>' +
     '</div>' +
-    '<label class="field"><span>' + (nd.direction === 'to_me' ? 'Кто должен' : 'Кому должен') + '</span>' +
-      '<input type="text" id="ndCounterparty" value="' + escapeAttr(nd.counterparty) + '" placeholder="Имя или описание"></label>' +
-    '<label class="field"><span>Сумма</span>' +
-      '<input type="number" inputmode="decimal" step="0.01" min="0" id="ndAmount" value="' + escapeAttr(nd.amount) + '" placeholder="0"></label>' +
-    '<label class="field"><span>Дата возникновения</span>' +
-      '<input type="date" id="ndDate" value="' + escapeAttr(nd.date) + '"></label>' +
-    '<label class="field"><span>Срок возврата (опционально)</span>' +
-      '<input type="date" id="ndDueDate" value="' + escapeAttr(nd.dueDate) + '"></label>' +
-    '<label class="field"><span>Комментарий</span>' +
-      '<input type="text" id="ndComment" value="' + escapeAttr(nd.comment) + '" placeholder="необязательно"></label>' +
+    '<label class="field"><span>' + (nd.direction === 'to_me' ? 'Кто должен' : 'Кому должен') + '</span><input type="text" id="ndCounterparty" value="' + escapeAttr(nd.counterparty) + '" placeholder="Имя или описание"></label>' +
+    '<label class="field"><span>Сумма</span><input type="number" inputmode="decimal" step="0.01" min="0" id="ndAmount" value="' + escapeAttr(nd.amount) + '" placeholder="0"></label>' +
+    '<label class="field"><span>Дата возникновения</span><input type="date" id="ndDate" value="' + escapeAttr(nd.date) + '"></label>' +
+    '<label class="field"><span>Срок возврата (опционально)</span><input type="date" id="ndDueDate" value="' + escapeAttr(nd.dueDate) + '"></label>' +
+    '<label class="field"><span>Комментарий</span><input type="text" id="ndComment" value="' + escapeAttr(nd.comment) + '" placeholder="необязательно"></label>' +
     '<button class="btn primary" data-act="add-debt">Добавить долг</button>';
 
   el.innerHTML = html;
@@ -933,18 +860,12 @@ function renderDebts() {
 
 function renderDebtEditForm(d) {
   return '<div class="txn" style="display:block">' +
-    '<label class="field"><span>Контрагент</span>' +
-      '<input type="text" id="edCounterparty" value="' + escapeAttr(d.counterparty) + '"></label>' +
-    '<label class="field"><span>Сумма (общая)</span>' +
-      '<input type="number" inputmode="decimal" step="0.01" min="0" id="edAmount" value="' + escapeAttr(d.amount) + '"></label>' +
-    '<label class="field"><span>Уже оплачено</span>' +
-      '<input type="number" inputmode="decimal" step="0.01" min="0" id="edPaid" value="' + escapeAttr(d.paid) + '"></label>' +
-    '<label class="field"><span>Дата</span>' +
-      '<input type="date" id="edDate" value="' + escapeAttr(d.date) + '"></label>' +
-    '<label class="field"><span>Срок (опционально)</span>' +
-      '<input type="date" id="edDueDate" value="' + escapeAttr(d.dueDate) + '"></label>' +
-    '<label class="field"><span>Комментарий</span>' +
-      '<input type="text" id="edComment" value="' + escapeAttr(d.comment) + '"></label>' +
+    '<label class="field"><span>Контрагент</span><input type="text" id="edCounterparty" value="' + escapeAttr(d.counterparty) + '"></label>' +
+    '<label class="field"><span>Сумма (общая)</span><input type="number" inputmode="decimal" step="0.01" min="0" id="edAmount" value="' + escapeAttr(d.amount) + '"></label>' +
+    '<label class="field"><span>Уже оплачено</span><input type="number" inputmode="decimal" step="0.01" min="0" id="edPaid" value="' + escapeAttr(d.paid) + '"></label>' +
+    '<label class="field"><span>Дата</span><input type="date" id="edDate" value="' + escapeAttr(d.date) + '"></label>' +
+    '<label class="field"><span>Срок (опционально)</span><input type="date" id="edDueDate" value="' + escapeAttr(d.dueDate) + '"></label>' +
+    '<label class="field"><span>Комментарий</span><input type="text" id="edComment" value="' + escapeAttr(d.comment) + '"></label>' +
     '<div style="display:flex;gap:6px">' +
       '<button class="btn ok" style="flex:1" data-act="save-debt" data-id="' + d.id + '">Сохранить</button>' +
       '<button class="btn" style="flex:1" data-act="cancel-debt">Отмена</button>' +
@@ -956,10 +877,8 @@ function renderDebtPayForm(d) {
   const remain = d.amount - d.paid;
   return '<div style="grid-column:1/-1;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:8px">' +
     '<div style="font-size:12px;color:var(--text2);margin-bottom:6px">Остаток по долгу: ' + fmtMoney(remain) + '</div>' +
-    '<label class="field"><span>Сумма платежа</span>' +
-      '<input type="number" inputmode="decimal" step="0.01" min="0" id="payDebtAmount" value="' + escapeAttr(remain) + '"></label>' +
-    '<label class="field"><span>Дата платежа</span>' +
-      '<input type="date" id="payDebtDate" value="' + todayISO() + '"></label>' +
+    '<label class="field"><span>Сумма платежа</span><input type="number" inputmode="decimal" step="0.01" min="0" id="payDebtAmount" value="' + escapeAttr(remain) + '"></label>' +
+    '<label class="field"><span>Дата платежа</span><input type="date" id="payDebtDate" value="' + todayISO() + '"></label>' +
     '<div style="display:flex;gap:6px">' +
       '<button class="btn ok" style="flex:1" data-act="confirm-pay-debt" data-id="' + d.id + '">Подтвердить</button>' +
       '<button class="btn" style="flex:1" data-act="cancel-pay-debt">Отмена</button>' +
@@ -979,10 +898,7 @@ function renderAccounts() {
     html += '<div class="empty">Нет счетов</div>';
   } else {
     for (const a of accounts) {
-      if (state.editingAccount === a.id) {
-        html += renderAccountEditForm(a);
-        continue;
-      }
+      if (state.editingAccount === a.id) { html += renderAccountEditForm(a); continue; }
       const bal = accountBalance(a.id);
       html +=
         '<div class="txn">' +
@@ -1003,16 +919,14 @@ function renderAccounts() {
 
   html +=
     '<div class="subhead">Новый счёт</div>' +
-    '<label class="field"><span>Название</span>' +
-      '<input type="text" id="naName" value="' + escapeAttr(na.name) + '" placeholder="Например, Карта Сбер"></label>' +
+    '<label class="field"><span>Название</span><input type="text" id="naName" value="' + escapeAttr(na.name) + '" placeholder="Например, Карта Сбер"></label>' +
     '<div class="subhead" style="margin-top:0">Тип</div>' +
     '<div class="filters">' +
       Object.keys(ACCOUNT_TYPES).map(t =>
         '<button class="chip ' + (na.type === t ? 'active' : '') + '" data-act="na-type" data-t="' + t + '">' + ACCOUNT_TYPES[t] + '</button>'
       ).join('') +
     '</div>' +
-    '<label class="field"><span>Начальный баланс</span>' +
-      '<input type="number" inputmode="decimal" step="0.01" id="naInitial" value="' + escapeAttr(na.initialBalance) + '" placeholder="0"></label>' +
+    '<label class="field"><span>Начальный баланс</span><input type="number" inputmode="decimal" step="0.01" id="naInitial" value="' + escapeAttr(na.initialBalance) + '" placeholder="0"></label>' +
     '<div class="subhead" style="margin-top:0">Цвет</div>' +
     '<div class="colors">' +
       COLORS.map(col =>
@@ -1026,16 +940,14 @@ function renderAccounts() {
 
 function renderAccountEditForm(a) {
   return '<div class="txn" style="display:block">' +
-    '<label class="field"><span>Название</span>' +
-      '<input type="text" id="eaName" value="' + escapeAttr(a.name) + '"></label>' +
+    '<label class="field"><span>Название</span><input type="text" id="eaName" value="' + escapeAttr(a.name) + '"></label>' +
     '<div class="subhead" style="margin-top:0">Тип</div>' +
     '<div class="filters">' +
       Object.keys(ACCOUNT_TYPES).map(t =>
         '<button class="chip ' + (a.type === t ? 'active' : '') + '" data-act="ea-type" data-id="' + a.id + '" data-t="' + t + '">' + ACCOUNT_TYPES[t] + '</button>'
       ).join('') +
     '</div>' +
-    '<label class="field"><span>Начальный баланс</span>' +
-      '<input type="number" inputmode="decimal" step="0.01" id="eaInitial" value="' + escapeAttr(a.initialBalance) + '"></label>' +
+    '<label class="field"><span>Начальный баланс</span><input type="number" inputmode="decimal" step="0.01" id="eaInitial" value="' + escapeAttr(a.initialBalance) + '"></label>' +
     '<div class="subhead" style="margin-top:0">Цвет</div>' +
     '<div class="colors">' +
       COLORS.map(col =>
@@ -1073,13 +985,12 @@ function computeForecast(window) {
     const avgExp = s.exp / window;
     const avgInc = s.inc / window;
     if (avgExp === 0 && avgInc === 0) continue;
-    rows.push({ cat: c, avgExp: avgExp, avgInc: avgInc });
+    rows.push({ cat: c, avgExp, avgInc });
     totalExp += avgExp;
     totalInc += avgInc;
   }
   rows.sort((a, b) => (b.avgExp + b.avgInc) - (a.avgExp + a.avgInc));
 
-  // Учёт постоянных расходов в прогнозе
   let recurringMonthly = 0;
   for (const r of state.data.recurringExpenses) {
     if (r.period === 'monthly') recurringMonthly += r.amount;
@@ -1110,18 +1021,12 @@ function renderForecast() {
     for (const r of fc.rows) {
       const isExp = r.avgExp >= r.avgInc;
       const perMonth = isExp ? r.avgExp : r.avgInc;
-      const perYear = perMonth * 12;
       html +=
         '<div class="fc-row">' +
-          '<div class="fc-name">' +
-            '<span class="dot-color" style="background:' + r.cat.color + '"></span>' +
-            '<span>' + escapeHtml(r.cat.name) + '</span>' +
-          '</div>' +
+          '<div class="fc-name"><span class="dot-color" style="background:' + r.cat.color + '"></span><span>' + escapeHtml(r.cat.name) + '</span></div>' +
           '<div class="fc-vals">' +
-            '<div class="main" style="color:var(--' + (isExp ? 'danger' : 'ok') + ')">' +
-              (isExp ? '−' : '+') + fmtMoney(perMonth) + ' / мес' +
-            '</div>' +
-            '<div class="sub">' + (isExp ? '−' : '+') + fmtMoney(perYear) + ' / год</div>' +
+            '<div class="main" style="color:var(--' + (isExp ? 'danger' : 'ok') + ')">' + (isExp ? '−' : '+') + fmtMoney(perMonth) + ' / мес</div>' +
+            '<div class="sub">' + (isExp ? '−' : '+') + fmtMoney(perMonth * 12) + ' / год</div>' +
           '</div>' +
         '</div>';
     }
@@ -1133,21 +1038,11 @@ function renderForecast() {
       '<div><span>Прогноз расходов (год)</span><b style="color:var(--danger)">' + fmtMoney(fc.totalExp * 12) + '</b></div>' +
       '<div><span>Прогноз доходов (мес)</span><b style="color:var(--ok)">' + fmtMoney(fc.totalInc) + '</b></div>' +
       '<div><span>Прогноз доходов (год)</span><b style="color:var(--ok)">' + fmtMoney(fc.totalInc * 12) + '</b></div>' +
-      '<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">' +
-        '<span>Прогноз баланса (мес)</span>' +
-        '<b style="color:var(--' + (fc.totalInc - fc.totalExp >= 0 ? 'ok' : 'danger') + ')">' + fmtMoney(fc.totalInc - fc.totalExp) + '</b>' +
-      '</div>' +
-      '<div><span>Прогноз баланса (год)</span>' +
-        '<b style="color:var(--' + (fc.totalInc - fc.totalExp >= 0 ? 'ok' : 'danger') + ')">' + fmtMoney((fc.totalInc - fc.totalExp) * 12) + '</b>' +
-      '</div>' +
+      '<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border)"><span>Прогноз баланса (мес)</span><b style="color:var(--' + (fc.totalInc - fc.totalExp >= 0 ? 'ok' : 'danger') + ')">' + fmtMoney(fc.totalInc - fc.totalExp) + '</b></div>' +
+      '<div><span>Прогноз баланса (год)</span><b style="color:var(--' + (fc.totalInc - fc.totalExp >= 0 ? 'ok' : 'danger') + ')">' + fmtMoney((fc.totalInc - fc.totalExp) * 12) + '</b></div>' +
       (fc.recurringMonthly > 0
-        ? '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">' +
-            '<span>Обязательные платежи / мес</span>' +
-            '<b style="color:var(--warn)">' + fmtMoney(fc.recurringMonthly) + '</b>' +
-          '</div>' +
-          '<div><span>Обязательные платежи / год</span>' +
-            '<b style="color:var(--warn)">' + fmtMoney(fc.recurringMonthly * 12) + '</b>' +
-          '</div>'
+        ? '<div style="margin-top:8px;padding-top:8px;border-top:1px solid var(--border)"><span>Обязательные платежи / мес</span><b style="color:var(--warn)">' + fmtMoney(fc.recurringMonthly) + '</b></div>' +
+          '<div><span>Обязательные платежи / год</span><b style="color:var(--warn)">' + fmtMoney(fc.recurringMonthly * 12) + '</b></div>'
         : '') +
     '</div>';
 
@@ -1164,22 +1059,17 @@ function renderCategories() {
 
   const renderGroup = (type, title) => {
     let s = '<div class="subhead">' + title + '</div>';
-    if (groups[type].length === 0) {
-      s += '<div class="empty">Пусто</div>';
-    } else {
+    if (groups[type].length === 0) s += '<div class="empty">Пусто</div>';
+    else {
       for (const c of groups[type]) {
-        if (state.editingCat === c.id) {
-          s += renderCatEditForm(c);
-        } else {
+        if (state.editingCat === c.id) s += renderCatEditForm(c);
+        else {
           s +=
             '<div class="txn">' +
-              '<div class="txn-cat">' +
-                '<span class="dot-color" style="background:' + c.color + '"></span>' +
-                '<span class="ellip">' + escapeHtml(c.name) + '</span>' +
-              '</div>' +
+              '<div class="txn-cat"><span class="dot-color" style="background:' + c.color + '"></span><span class="ellip">' + escapeHtml(c.name) + '</span></div>' +
               '<div></div>' +
               '<div class="txn-actions">' +
-                '<button class="mini yellow" data-act="edit-cat" data-id="' + c.id + '">&#9998;</button>' +
+                '<button class="mini yellow" data-act="edit-category" data-id="' + c.id + '">&#9998;</button>' +
                 '<button class="mini red" data-act="del-cat" data-id="' + c.id + '">&#10005;</button>' +
               '</div>' +
             '</div>';
@@ -1194,8 +1084,7 @@ function renderCategories() {
 
   html +=
     '<div class="subhead">Новая категория</div>' +
-    '<label class="field"><span>Название</span>' +
-      '<input type="text" id="newCatName" placeholder="Название" value="' + escapeAttr(state._newCatName || '') + '"></label>' +
+    '<label class="field"><span>Название</span><input type="text" id="newCatName" placeholder="Название" value="' + escapeAttr(state._newCatName || '') + '"></label>' +
     '<div class="type-toggle">' +
       '<button class="tt-btn ' + ((state._newCatType || 'expense') === 'expense' ? 'active exp' : '') + '" data-act="new-cat-type" data-type="expense">Расход</button>' +
       '<button class="tt-btn ' + ((state._newCatType || 'expense') === 'income'  ? 'active inc' : '') + '" data-act="new-cat-type" data-type="income">Доход</button>' +
@@ -1212,8 +1101,7 @@ function renderCategories() {
 
 function renderCatEditForm(c) {
   return '<div class="txn" style="display:block">' +
-    '<label class="field"><span>Название</span>' +
-      '<input type="text" id="editCatName" value="' + escapeAttr(c.name) + '"></label>' +
+    '<label class="field"><span>Название</span><input type="text" id="editCatName" value="' + escapeAttr(c.name) + '"></label>' +
     '<div class="type-toggle">' +
       '<button class="tt-btn ' + (c.type === 'expense' ? 'active exp' : '') + '" data-act="edit-cat-type" data-id="' + c.id + '" data-type="expense">Расход</button>' +
       '<button class="tt-btn ' + (c.type === 'income'  ? 'active inc' : '') + '" data-act="edit-cat-type" data-id="' + c.id + '" data-type="income">Доход</button>' +
@@ -1234,36 +1122,24 @@ function renderCatEditForm(c) {
 function renderBackup() {
   const el = document.getElementById('backupBody');
   let html =
-    '<div class="hint">Сохраните все данные (счета, категории, операции, долги, постоянные расходы) в один файл. ' +
-    'Позже сможете загрузить его обратно — это полностью заменит текущие данные.</div>' +
+    '<div class="hint">Сохраните все данные (счета, категории, операции, долги, постоянные расходы) в один файл. Позже сможете загрузить его обратно — это полностью заменит текущие данные.</div>' +
     '<button class="btn block ok" data-act="export-backup">💾 Сохранить в файл</button>' +
-    '<button class="btn block primary" data-act="import-backup">📂 Загрузить из файла</button>';
-
-  html += '<div class="hint" style="margin-top:12px">Резервный способ (если файлы не работают)</div>';
-  html += '<button class="btn block" data-act="toggle-show-json">' +
-    (state._showJson ? '▲ Скрыть JSON' : '⬜ Показать JSON для копирования') +
-  '</button>';
+    '<button class="btn block primary" data-act="import-backup">📂 Загрузить из файла</button>' +
+    '<div class="hint" style="margin-top:12px">Резервный способ (если файлы не работают)</div>' +
+    '<button class="btn block" data-act="toggle-show-json">' + (state._showJson ? '▲ Скрыть JSON' : '⬜ Показать JSON для копирования') + '</button>';
 
   if (state._showJson) {
     const json = JSON.stringify(state.data, null, 2);
     html += '<textarea class="json-area" id="jsonBox" readonly>' + escapeHtml(json) + '</textarea>' +
-      '<div style="display:flex;gap:6px">' +
-        '<button class="btn ok" style="flex:1" data-act="copy-json">Скопировать</button>' +
-        '<button class="btn" style="flex:1" data-act="toggle-show-json">Закрыть</button>' +
-      '</div>';
+      '<div style="display:flex;gap:6px"><button class="btn ok" style="flex:1" data-act="copy-json">Скопировать</button><button class="btn" style="flex:1" data-act="toggle-show-json">Закрыть</button></div>';
   }
 
   html += '<button class="btn block" data-act="toggle-show-paste" style="margin-top:8px">' +
-    (state._showPasteJson ? '▲ Скрыть поле вставки' : '⬇ Вставить JSON для загрузки') +
-  '</button>';
+    (state._showPasteJson ? '▲ Скрыть поле вставки' : '⬇ Вставить JSON для загрузки') + '</button>';
 
   if (state._showPasteJson) {
-    html += '<textarea class="json-area" id="pasteBox" placeholder="Вставь сюда JSON…">' +
-      escapeHtml(state._pasteJsonValue || '') + '</textarea>' +
-      '<div style="display:flex;gap:6px">' +
-        '<button class="btn primary" style="flex:1" data-act="apply-paste-json">Загрузить</button>' +
-        '<button class="btn" style="flex:1" data-act="toggle-show-paste">Отмена</button>' +
-      '</div>';
+    html += '<textarea class="json-area" id="pasteBox" placeholder="Вставь сюда JSON…">' + escapeHtml(state._pasteJsonValue || '') + '</textarea>' +
+      '<div style="display:flex;gap:6px"><button class="btn primary" style="flex:1" data-act="apply-paste-json">Загрузить</button><button class="btn" style="flex:1" data-act="toggle-show-paste">Отмена</button></div>';
   }
 
   el.innerHTML = html;
@@ -1273,8 +1149,7 @@ function renderBackup() {
 function renderDanger() {
   const el = document.getElementById('dangerBody');
   el.innerHTML =
-    '<div class="hint">Удаление необратимо: все счета, категории, операции, долги и постоянные расходы будут стёрты, ' +
-    'восстановить их можно только из заранее сохранённой резервной копии.</div>' +
+    '<div class="hint">Удаление необратимо: все счета, категории, операции, долги и постоянные расходы будут стёрты, восстановить их можно только из заранее сохранённой резервной копии.</div>' +
     '<button class="btn block danger" data-act="clear-all">Очистить все данные</button>';
 }
 
@@ -1298,7 +1173,7 @@ document.addEventListener('click', (e) => {
     saveUI(); applyCollapsed(); return;
   }
 
-  /* Форма добавления операции */
+  /* Форма добавления */
   if (act === 'set-type') { state.newTxn.type = t.dataset.type; state.newTxn.categoryId = null; renderAdd(); return; }
   if (act === 'pick-cat-new') { state.newTxn.categoryId = t.dataset.id; renderAdd(); return; }
   if (act === 'pick-acc-new') { state.newTxn.accountId = t.dataset.id; renderAdd(); return; }
@@ -1309,10 +1184,7 @@ document.addEventListener('click', (e) => {
   if (act === 'filter-cat') { state.ui.filterCat = t.dataset.v; saveUI(); renderTransactions(); return; }
 
   /* Редактирование операции */
-  if (act === 'edit-txn') {
-    state.editingTxn = t.dataset.id;
-    renderTransactions(); return;
-  }
+  if (act === 'edit-txn') { state.editingTxn = t.dataset.id; renderTransactions(); return; }
   if (act === 'cancel-edit') { state.editingTxn = null; renderTransactions(); return; }
   if (act === 'edit-type') {
     const txn = state.data.transactions.find(x => x.id === t.dataset.id);
@@ -1322,7 +1194,7 @@ document.addEventListener('click', (e) => {
     if (cat && cat.type !== txn.type) txn.categoryId = null;
     renderTransactions(); return;
   }
-  if (act === 'edit-cat') {
+  if (act === 'edit-txn-cat') {
     const txn = state.data.transactions.find(x => x.id === t.dataset.id);
     if (!txn) return;
     txn.categoryId = t.dataset.cat; renderTransactions(); return;
@@ -1338,84 +1210,53 @@ document.addEventListener('click', (e) => {
   /* Прогноз */
   if (act === 'fc-window') { state.ui.forecastWindow = parseInt(t.dataset.n, 10) || 3; saveUI(); renderForecast(); return; }
 
-  /* ===== Постоянные расходы ===== */
+  /* Постоянные расходы */
   if (act === 'nr-pick-acc') { state.newRecurring.accountId = t.dataset.id; renderRecurring(); return; }
   if (act === 'nr-pick-cat') { state.newRecurring.categoryId = t.dataset.id || null; renderRecurring(); return; }
   if (act === 'nr-period')   { state.newRecurring.period = t.dataset.p; renderRecurring(); return; }
   if (act === 'add-recurring') { handleAddRecurring(); return; }
-  if (act === 'toggle-rec-hist') {
-    const id = t.dataset.id;
-    state.expandedRecurring[id] = !state.expandedRecurring[id];
-    renderRecurring(); return;
-  }
-  if (act === 'pay-recurring') {
-    state.payingRecurring = (state.payingRecurring === t.dataset.id) ? null : t.dataset.id;
-    renderRecurring(); return;
-  }
+  if (act === 'toggle-rec-hist') { const id = t.dataset.id; state.expandedRecurring[id] = !state.expandedRecurring[id]; renderRecurring(); return; }
+  if (act === 'pay-recurring') { state.payingRecurring = (state.payingRecurring === t.dataset.id) ? null : t.dataset.id; renderRecurring(); return; }
   if (act === 'cancel-pay-recurring') { state.payingRecurring = null; renderRecurring(); return; }
   if (act === 'confirm-pay-recurring') { handlePayRecurring(t.dataset.id); return; }
   if (act === 'edit-recurring')   { state.editingRecurring = t.dataset.id; renderRecurring(); return; }
   if (act === 'cancel-recurring') { state.editingRecurring = null; renderRecurring(); return; }
-  if (act === 'er-pick-acc') {
-    const r = state.data.recurringExpenses.find(x => x.id === t.dataset.id);
-    if (r) { r.accountId = t.dataset.acc; renderRecurring(); } return;
-  }
-  if (act === 'er-pick-cat') {
-    const r = state.data.recurringExpenses.find(x => x.id === t.dataset.id);
-    if (r) { r.categoryId = t.dataset.cat || null; renderRecurring(); } return;
-  }
-  if (act === 'er-period') {
-    const r = state.data.recurringExpenses.find(x => x.id === t.dataset.id);
-    if (r) { r.period = t.dataset.p; renderRecurring(); } return;
-  }
+  if (act === 'er-pick-acc') { const r = state.data.recurringExpenses.find(x => x.id === t.dataset.id); if (r) { r.accountId = t.dataset.acc; renderRecurring(); } return; }
+  if (act === 'er-pick-cat') { const r = state.data.recurringExpenses.find(x => x.id === t.dataset.id); if (r) { r.categoryId = t.dataset.cat || null; renderRecurring(); } return; }
+  if (act === 'er-period')   { const r = state.data.recurringExpenses.find(x => x.id === t.dataset.id); if (r) { r.period = t.dataset.p; renderRecurring(); } return; }
   if (act === 'save-recurring')   { handleSaveRecurring(t.dataset.id); return; }
   if (act === 'del-recurring')    { handleDeleteRecurring(t.dataset.id); return; }
 
-  /* ===== Долги ===== */
+  /* Долги */
   if (act === 'nd-dir') { state.newDebt.direction = t.dataset.dir; renderDebts(); return; }
   if (act === 'add-debt') { handleAddDebt(); return; }
   if (act === 'edit-debt')   { state.editingDebt = t.dataset.id; renderDebts(); return; }
   if (act === 'cancel-debt') { state.editingDebt = null; renderDebts(); return; }
   if (act === 'save-debt')   { handleSaveDebt(t.dataset.id); return; }
   if (act === 'del-debt')    { handleDeleteDebt(t.dataset.id); return; }
-  if (act === 'pay-debt') {
-    state.payingDebt = (state.payingDebt === t.dataset.id) ? null : t.dataset.id;
-    renderDebts(); return;
-  }
+  if (act === 'pay-debt')    { state.payingDebt = (state.payingDebt === t.dataset.id) ? null : t.dataset.id; renderDebts(); return; }
   if (act === 'cancel-pay-debt') { state.payingDebt = null; renderDebts(); return; }
   if (act === 'confirm-pay-debt') { handlePayDebt(t.dataset.id); return; }
 
-  /* ===== Счета ===== */
+  /* Счета */
   if (act === 'na-type') { state.newAccount.type = t.dataset.t; renderAccounts(); return; }
   if (act === 'na-color') { state.newAccount.color = t.dataset.color; renderAccounts(); return; }
   if (act === 'add-account') { handleAddAccount(); return; }
   if (act === 'edit-account')   { state.editingAccount = t.dataset.id; renderAccounts(); return; }
   if (act === 'cancel-account') { state.editingAccount = null; renderAccounts(); return; }
-  if (act === 'ea-type') {
-    const a = state.data.accounts.find(x => x.id === t.dataset.id);
-    if (a) { a.type = t.dataset.t; renderAccounts(); } return;
-  }
-  if (act === 'ea-color') {
-    const a = state.data.accounts.find(x => x.id === t.dataset.id);
-    if (a) { a.color = t.dataset.color; renderAccounts(); } return;
-  }
+  if (act === 'ea-type') { const a = state.data.accounts.find(x => x.id === t.dataset.id); if (a) { a.type = t.dataset.t; renderAccounts(); } return; }
+  if (act === 'ea-color') { const a = state.data.accounts.find(x => x.id === t.dataset.id); if (a) { a.color = t.dataset.color; renderAccounts(); } return; }
   if (act === 'save-account')   { handleSaveAccount(t.dataset.id); return; }
   if (act === 'del-account')    { handleDeleteAccount(t.dataset.id); return; }
 
-  /* ===== Категории ===== */
+  /* Категории */
   if (act === 'new-cat-type') { state._newCatType = t.dataset.type; renderCategories(); return; }
   if (act === 'pick-color')   { state.editingCatColor = t.dataset.color; renderCategories(); return; }
   if (act === 'add-cat')      { handleAddCat(); return; }
-  if (act === 'edit-cat')     { state.editingCat = t.dataset.id; renderCategories(); return; }
+  if (act === 'edit-category') { state.editingCat = t.dataset.id; renderCategories(); return; }
   if (act === 'cancel-cat')   { state.editingCat = null; renderCategories(); return; }
-  if (act === 'edit-cat-type') {
-    const c = state.data.categories.find(x => x.id === t.dataset.id);
-    if (c) { c.type = t.dataset.type; renderCategories(); } return;
-  }
-  if (act === 'edit-cat-color') {
-    const c = state.data.categories.find(x => x.id === t.dataset.id);
-    if (c) { c.color = t.dataset.color; renderCategories(); } return;
-  }
+  if (act === 'edit-cat-type') { const c = state.data.categories.find(x => x.id === t.dataset.id); if (c) { c.type = t.dataset.type; renderCategories(); } return; }
+  if (act === 'edit-cat-color') { const c = state.data.categories.find(x => x.id === t.dataset.id); if (c) { c.color = t.dataset.color; renderCategories(); } return; }
   if (act === 'save-cat') { handleSaveCat(t.dataset.id); return; }
   if (act === 'del-cat')  { handleDeleteCat(t.dataset.id); return; }
 
@@ -1450,8 +1291,7 @@ document.addEventListener('input', (e) => {
   else if (t.id === 'ndDueDate') state.newDebt.dueDate = t.value;
   else if (t.id === 'ndComment') state.newDebt.comment = t.value;
   else if (t.id === 'filterSearch') {
-    state.ui.filterSearch = t.value;
-    saveUI();
+    state.ui.filterSearch = t.value; saveUI();
     const val = t.value;
     renderTransactions();
     const inp = document.getElementById('filterSearch');
@@ -1463,10 +1303,9 @@ document.addEventListener('change', (e) => {
 });
 
 /* ============================================================
-   ОБРАБОТЧИКИ ДЕЙСТВИЙ
+   ДЕЙСТВИЯ
    ============================================================ */
 
-/* ----- Операции ----- */
 async function handleAddTxn() {
   const nt = state.newTxn;
   if (!nt.accountId) { toast('Выбери счёт', 'err'); return; }
@@ -1476,15 +1315,9 @@ async function handleAddTxn() {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(nt.date)) { toast('Укажи дату', 'err'); return; }
 
   const txn = {
-    id: uid(),
-    categoryId: nt.categoryId,
-    accountId: nt.accountId,
-    type: nt.type,
-    amount,
-    date: nt.date,
-    comment: nt.comment.trim(),
-    recurring: !!nt.recurring,
-    createdAt: Date.now()
+    id: uid(), categoryId: nt.categoryId, accountId: nt.accountId,
+    type: nt.type, amount, date: nt.date, comment: nt.comment.trim(),
+    recurring: !!nt.recurring, createdAt: Date.now()
   };
   if (txn.recurring) txn.skipped = [];
 
@@ -1503,14 +1336,12 @@ async function handleSaveEdit(id) {
   const date = document.getElementById('editDate').value;
   const comment = document.getElementById('editComment').value;
   const recurring = document.getElementById('editRecurring').checked;
-  if (!(amount > 0)) { toast('Сумма должна быть больше нуля', 'err'); return; }
+  if (!(amount > 0)) { toast('Сумма > 0', 'err'); return; }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { toast('Некорректная дата', 'err'); return; }
   if (!txn.categoryId) { toast('Выбери категорию', 'err'); return; }
   if (!txn.accountId) { toast('Выбери счёт', 'err'); return; }
 
-  txn.amount = amount;
-  txn.date = date;
-  txn.comment = comment.trim();
+  txn.amount = amount; txn.date = date; txn.comment = comment.trim();
   if (recurring && !txn.recurring) { txn.recurring = true; txn.skipped = []; }
   if (!recurring && txn.recurring) { delete txn.recurring; delete txn.skipped; }
 
@@ -1533,7 +1364,7 @@ async function handleDeleteTxn(id) {
     if (txn.skipped.indexOf(state.currentMonth) === -1) txn.skipped.push(state.currentMonth);
     toast('Пропущено в этом месяце', 'ok');
   } else if (txn.recurring) {
-    if (!confirm('Удалить всю серию повторений этой операции?')) return;
+    if (!confirm('Удалить всю серию повторений?')) return;
     state.data.transactions.splice(idx, 1);
     toast('Серия удалена', 'ok');
   } else {
@@ -1546,15 +1377,12 @@ async function handleDeleteTxn(id) {
   await save();
 }
 
-/* ----- Счета ----- */
 async function handleAddAccount() {
   const na = state.newAccount;
   if (!na.name.trim()) { toast('Введи название', 'err'); return; }
   state.data.accounts.push({
-    id: uid(),
-    name: na.name.trim(),
-    type: na.type || 'other',
-    color: na.color || COLORS[3],
+    id: uid(), name: na.name.trim(),
+    type: na.type || 'other', color: na.color || COLORS[3],
     initialBalance: num(na.initialBalance)
   });
   state.newAccount = { name:'', type:'cash', color: COLORS[3], initialBalance:'' };
@@ -1581,11 +1409,10 @@ async function handleDeleteAccount(id) {
   if (!a) return;
   const used = state.data.transactions.filter(t => t.accountId === id).length
              + state.data.recurringExpenses.filter(r => r.accountId === id).length;
-  if (used > 0) {
-    if (!confirm('К счёту привязано ' + used + ' операций/платежей. Удалить счёт? Привязки будут сброшены.')) return;
-  } else {
-    if (!confirm('Удалить счёт?')) return;
-  }
+  const msg = used > 0
+    ? 'К счёту привязано ' + used + ' операций/платежей. Удалить счёт? Привязки будут сброшены.'
+    : 'Удалить счёт?';
+  if (!confirm(msg)) return;
   state.data.accounts = state.data.accounts.filter(x => x.id !== id);
   for (const t of state.data.transactions) if (t.accountId === id) t.accountId = null;
   for (const r of state.data.recurringExpenses) if (r.accountId === id) r.accountId = null;
@@ -1594,7 +1421,6 @@ async function handleDeleteAccount(id) {
   await save();
 }
 
-/* ----- Категории ----- */
 async function handleAddCat() {
   const name = (state._newCatName || '').trim();
   const type = state._newCatType || 'expense';
@@ -1638,7 +1464,6 @@ async function handleDeleteCat(id) {
   await save();
 }
 
-/* ----- Постоянные расходы ----- */
 async function handleAddRecurring() {
   const nr = state.newRecurring;
   if (!nr.name.trim()) { toast('Введи название', 'err'); return; }
@@ -1648,14 +1473,9 @@ async function handleAddRecurring() {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(nr.nextDate)) { toast('Укажи дату', 'err'); return; }
 
   state.data.recurringExpenses.push({
-    id: uid(),
-    name: nr.name.trim(),
-    accountId: nr.accountId,
-    categoryId: nr.categoryId || null,
-    amount,
-    nextDate: nr.nextDate,
-    period: nr.period || 'monthly',
-    history: []
+    id: uid(), name: nr.name.trim(),
+    accountId: nr.accountId, categoryId: nr.categoryId || null,
+    amount, nextDate: nr.nextDate, period: nr.period || 'monthly', history: []
   });
   state.newRecurring = { name:'', accountId: nr.accountId, categoryId: null, amount:'', nextDate: todayISO(), period: nr.period };
   toast('Постоянный расход добавлен', 'ok');
@@ -1672,9 +1492,7 @@ async function handleSaveRecurring(id) {
   if (!name) { toast('Введи название', 'err'); return; }
   if (!(amount > 0)) { toast('Сумма > 0', 'err'); return; }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) { toast('Некорректная дата', 'err'); return; }
-  r.name = name;
-  r.amount = amount;
-  r.nextDate = nextDate;
+  r.name = name; r.amount = amount; r.nextDate = nextDate;
   state.editingRecurring = null;
   toast('Сохранено', 'ok');
   renderAll();
@@ -1700,18 +1518,10 @@ async function handlePayRecurring(id) {
   if (!(paidAmount > 0)) { toast('Сумма > 0', 'err'); return; }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(paidDate)) { toast('Некорректная дата', 'err'); return; }
 
-  // Записываем в историю
-  r.history.push({
-    plannedAmount: r.amount,
-    paidAmount: paidAmount,
-    paidDate: paidDate,
-    comment: ''
-  });
+  r.history.push({ plannedAmount: r.amount, paidAmount, paidDate, comment: '' });
 
-  // Создаём операцию, если нужно
   if (addTxn) {
     let categoryId = r.categoryId;
-    // Если у постоянного расхода нет категории, ищем категорию по имени или создаём «Обязательные»
     if (!categoryId) {
       let cat = state.data.categories.find(c => c.name.toLowerCase() === 'обязательные' && c.type === 'expense');
       if (!cat) {
@@ -1721,23 +1531,15 @@ async function handlePayRecurring(id) {
       categoryId = cat.id;
     }
     state.data.transactions.push({
-      id: uid(),
-      categoryId: categoryId,
-      accountId: r.accountId,
-      type: 'expense',
-      amount: paidAmount,
-      date: paidDate,
-      comment: r.name,
-      recurring: false,
-      createdAt: Date.now()
+      id: uid(), categoryId, accountId: r.accountId, type: 'expense',
+      amount: paidAmount, date: paidDate, comment: r.name,
+      recurring: false, createdAt: Date.now()
     });
   }
 
-  // Сдвигаем nextDate на следующий период
   if (r.period === 'monthly')      r.nextDate = addMonthsISO(r.nextDate, 1);
   else if (r.period === 'yearly')  r.nextDate = addYearsISO(r.nextDate, 1);
   else if (r.period === 'weekly')  r.nextDate = addDaysISO(r.nextDate, 7);
-  // при 'once' — дата остаётся, платёж одноразовый
 
   state.payingRecurring = null;
   toast('Оплата записана', 'ok');
@@ -1745,7 +1547,6 @@ async function handlePayRecurring(id) {
   await save();
 }
 
-/* ----- Долги ----- */
 async function handleAddDebt() {
   const nd = state.newDebt;
   if (!nd.counterparty.trim()) { toast('Укажи контрагента', 'err'); return; }
@@ -1754,16 +1555,11 @@ async function handleAddDebt() {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(nd.date)) { toast('Некорректная дата', 'err'); return; }
 
   state.data.debts.push({
-    id: uid(),
-    direction: nd.direction,
+    id: uid(), direction: nd.direction,
     counterparty: nd.counterparty.trim(),
-    amount,
-    paid: 0,
-    date: nd.date,
+    amount, paid: 0, date: nd.date,
     dueDate: /^\d{4}-\d{2}-\d{2}$/.test(nd.dueDate) ? nd.dueDate : '',
-    comment: nd.comment.trim(),
-    closed: false,
-    payments: []
+    comment: nd.comment.trim(), closed: false, payments: []
   });
   state.newDebt = { direction: nd.direction, counterparty:'', amount:'', date: todayISO(), dueDate:'', comment:'' };
   toast('Долг добавлен', 'ok');
@@ -1783,9 +1579,7 @@ async function handleSaveDebt(id) {
   if (!counterparty) { toast('Укажи контрагента', 'err'); return; }
   if (!(amount > 0)) { toast('Сумма > 0', 'err'); return; }
   d.counterparty = counterparty;
-  d.amount = amount;
-  d.paid = paid;
-  d.date = date;
+  d.amount = amount; d.paid = paid; d.date = date;
   d.dueDate = /^\d{4}-\d{2}-\d{2}$/.test(dueDate) ? dueDate : '';
   d.comment = comment.trim();
   d.closed = d.paid >= d.amount;
@@ -1821,47 +1615,33 @@ async function handlePayDebt(id) {
   await save();
 }
 
-/* ----- Резервное копирование ----- */
 function exportBackup() {
   const json = JSON.stringify(state.data, null, 2);
   const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const d = new Date();
-  const stamp = d.getFullYear() + '-' +
-    String(d.getMonth() + 1).padStart(2, '0') + '-' +
-    String(d.getDate()).padStart(2, '0');
+  const stamp = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   const a = document.createElement('a');
-  a.href = url;
-  a.download = 'expense-diary-' + stamp + '.json';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  a.href = url; a.download = 'expense-diary-' + stamp + '.json';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   toast('Файл сохранён', 'ok');
 }
 
 function triggerImport() {
   const input = document.createElement('input');
-  input.type = 'file';
-  input.accept = '.json,application/json';
-  input.style.display = 'none';
+  input.type = 'file'; input.accept = '.json,application/json'; input.style.display = 'none';
   input.onchange = (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = (ev) => {
-      try {
-        const parsed = JSON.parse(ev.target.result);
-        applyImport(parsed);
-      } catch (err) {
-        console.error('JSON parse error', err);
-        toast('Неверный формат JSON', 'err');
-      }
+      try { const parsed = JSON.parse(ev.target.result); applyImport(parsed); }
+      catch (err) { console.error('JSON parse error', err); toast('Неверный формат JSON', 'err'); }
     };
     reader.readAsText(file);
   };
-  document.body.appendChild(input);
-  input.click();
+  document.body.appendChild(input); input.click();
   setTimeout(() => document.body.removeChild(input), 1000);
 }
 
@@ -1873,16 +1653,10 @@ async function applyImport(parsed) {
   norm.version = Math.max(state.data.version || 0, num(norm.version)) + 1;
   state.data = norm;
 
-  state.editingTxn = null;
-  state.editingCat = null;
-  state.editingAccount = null;
-  state.editingDebt = null;
-  state.editingRecurring = null;
-  state.payingRecurring = null;
-  state.payingDebt = null;
-  state._showJson = false;
-  state._showPasteJson = false;
-  state._pasteJsonValue = '';
+  state.editingTxn = null; state.editingCat = null; state.editingAccount = null;
+  state.editingDebt = null; state.editingRecurring = null;
+  state.payingRecurring = null; state.payingDebt = null;
+  state._showJson = false; state._showPasteJson = false; state._pasteJsonValue = '';
 
   toast('Данные загружены', 'ok');
   renderAll();
@@ -1911,12 +1685,10 @@ async function applyPasteJson() {
   const raw = (state._pasteJsonValue || '').trim();
   if (!raw) { toast('Поле пустое', 'err'); return; }
   let parsed;
-  try { parsed = JSON.parse(raw); }
-  catch (e) { toast('Неверный JSON', 'err'); return; }
+  try { parsed = JSON.parse(raw); } catch (e) { toast('Неверный JSON', 'err'); return; }
   await applyImport(parsed);
 }
 
-/* ----- Опасная зона ----- */
 async function handleClearAll() {
   if (!confirm('Очистить ВСЕ данные?\nСчета, категории, операции, долги и постоянные расходы будут стёрты.')) return;
   if (!confirm('Точно? Это действие необратимо и синхронизируется на все устройства.')) return;
@@ -1926,16 +1698,10 @@ async function handleClearAll() {
     categories: defaultCategories(),
     transactions: [], debts: [], recurringExpenses: [], version: 0
   });
-  state.editingTxn = null;
-  state.editingCat = null;
-  state.editingAccount = null;
-  state.editingDebt = null;
-  state.editingRecurring = null;
-  state.payingRecurring = null;
-  state.payingDebt = null;
-  state._showJson = false;
-  state._showPasteJson = false;
-  state._pasteJsonValue = '';
+  state.editingTxn = null; state.editingCat = null; state.editingAccount = null;
+  state.editingDebt = null; state.editingRecurring = null;
+  state.payingRecurring = null; state.payingDebt = null;
+  state._showJson = false; state._showPasteJson = false; state._pasteJsonValue = '';
 
   toast('Все данные очищены', 'ok');
   renderAll();
