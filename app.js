@@ -10,12 +10,13 @@ const LS_MONTH = 'expense_diary_month_v1';
 
 // >>> ЗАМЕНИ НА СВОЙ КОНФИГ ИЗ FIREBASE <<<
 const FIREBASE_CONFIG = {
-  apiKey: "PASTE_API_KEY",
-  authDomain: "PASTE.firebaseapp.com",
-  projectId: "PASTE",
-  storageBucket: "PASTE.appspot.com",
-  messagingSenderId: "PASTE",
-  appId: "PASTE"
+  apiKey: "AIzaSyBf73zJJP8LxzaOVyssk2wPDPyd0P3iziA",
+  authDomain: "manager-6f1c6.firebaseapp.com",
+  projectId: "manager-6f1c6",
+  storageBucket: "manager-6f1c6.firebasestorage.app",
+  messagingSenderId: "806246372105",
+  appId: "1:806246372105:web:f8103cf763c241eacff9d8",
+  measurementId: "G-MCZJ2K8LN9"
 };
 
 const COLORS = ['#e53935','#fb8c00','#fdd835','#43a047','#00897b','#1e88e5',
