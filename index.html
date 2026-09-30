@@ -46,6 +46,7 @@ html,body{margin:0;padding:0;background:var(--bg);color:var(--text);font-family:
 main{padding:10px 12px;display:flex;flex-direction:column;gap:10px}
 
 .section{background:var(--bg2);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.section.danger-zone .sec-head{color:var(--danger)}
 .sec-head{
   display:flex;justify-content:space-between;align-items:center;
   padding:12px 14px;margin:0;font-size:15px;font-weight:600;cursor:pointer;
@@ -89,21 +90,25 @@ main{padding:10px 12px;display:flex;flex-direction:column;gap:10px}
 
 .field{display:block;margin-bottom:10px}
 .field > span{display:block;font-size:12px;color:var(--text2);margin-bottom:4px}
-.field input{
+.field input,.field textarea{
   width:100%;padding:10px 12px;border-radius:9px;border:1px solid var(--border);
   background:var(--bg);color:var(--text);font-size:15px;outline:none;
+  font-family:inherit;
 }
-.field input:focus{border-color:var(--accent)}
+.field input:focus,.field textarea:focus{border-color:var(--accent)}
+.field textarea{min-height:60px;resize:vertical}
 .check{display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:14px;cursor:pointer}
 .check input{width:18px;height:18px}
 
-.type-toggle{display:flex;gap:6px;margin-bottom:12px}
+.type-toggle{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
 .tt-btn{
-  flex:1;padding:10px;border-radius:9px;border:1px solid var(--border);
+  flex:1;min-width:100px;padding:10px;border-radius:9px;border:1px solid var(--border);
   background:var(--bg);color:var(--text);font-size:14px;font-weight:600;cursor:pointer;
 }
 .tt-btn.active.exp{background:var(--danger);color:#fff;border-color:var(--danger)}
 .tt-btn.active.inc{background:var(--ok);color:#fff;border-color:var(--ok)}
+.tt-btn.active{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
+.tt-btn.active.neutral{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
 
 .cat-grid{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
 .cat-btn{
@@ -112,6 +117,7 @@ main{padding:10px 12px;display:flex;flex-direction:column;gap:10px}
   background:var(--bg);color:var(--text);font-size:13px;cursor:pointer;
 }
 .cat-btn.active{border-color:var(--c, var(--accent));background:color-mix(in srgb, var(--c, var(--accent)) 15%, transparent)}
+.cat-btn.active-simple{border-color:var(--accent);background:color-mix(in srgb, var(--accent) 15%, transparent)}
 
 .btn{
   display:inline-block;padding:10px 16px;border-radius:9px;border:none;cursor:pointer;
@@ -122,6 +128,8 @@ main{padding:10px 12px;display:flex;flex-direction:column;gap:10px}
 .btn.danger{background:var(--danger);color:#fff;border-color:var(--danger)}
 .btn.warn{background:var(--warn);color:#111;border-color:var(--warn)}
 .btn.small{padding:6px 10px;font-size:12px}
+.btn.block{display:block;width:100%;margin-bottom:8px}
+.btn.block:last-child{margin-bottom:0}
 
 .filters{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
 .chip{
@@ -139,13 +147,13 @@ main{padding:10px 12px;display:flex;flex-direction:column;gap:10px}
   grid-template-columns:1fr auto;gap:4px 8px;align-items:center;
 }
 .txn.virtual{border-style:dashed;opacity:.92}
-.txn-cat{display:flex;align-items:center;gap:7px;font-size:14px;min-width:0}
-.txn-cat > span:nth-child(2){overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.txn-cat{display:flex;align-items:center;gap:7px;font-size:14px;min-width:0;flex-wrap:wrap}
+.txn-cat > span.ellip{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .txn-amt{font-weight:700;font-variant-numeric:tabular-nums;font-size:14px;white-space:nowrap}
 .txn-amt.expense{color:var(--danger)}
 .txn-amt.income{color:var(--ok)}
 .txn-cmt{grid-column:1/-1;font-size:12px;color:var(--text2);word-break:break-word}
-.txn-actions{grid-column:1/-1;display:flex;gap:6px;justify-content:flex-end;margin-top:4px}
+.txn-actions{grid-column:1/-1;display:flex;gap:6px;justify-content:flex-end;margin-top:4px;flex-wrap:wrap}
 .mini{
   width:30px;height:30px;border-radius:8px;border:1px solid var(--border);
   background:var(--bg);color:var(--text);cursor:pointer;font-size:13px;padding:0;
@@ -153,7 +161,10 @@ main{padding:10px 12px;display:flex;flex-direction:column;gap:10px}
 .mini.red{background:var(--danger);color:#fff;border-color:var(--danger)}
 .mini.yellow{background:var(--warn);color:#111;border-color:var(--warn)}
 .mini.ok{background:var(--ok);color:#fff;border-color:var(--ok)}
-.badge{font-size:11px;opacity:.7}
+.badge{font-size:11px;opacity:.75;padding:1px 6px;border-radius:6px;background:rgba(127,127,127,.12)}
+.badge.ok{background:rgba(76,175,80,.2);color:var(--ok);opacity:1}
+.badge.danger{background:rgba(239,83,80,.2);color:var(--danger);opacity:1}
+.badge.warn{background:rgba(255,179,0,.2);color:#b37700;opacity:1}
 
 .fc-row{display:grid;grid-template-columns:1fr auto;gap:4px 8px;padding:8px 0;border-bottom:1px solid var(--border)}
 .fc-row:last-child{border-bottom:none}
@@ -165,10 +176,29 @@ main{padding:10px 12px;display:flex;flex-direction:column;gap:10px}
 .fc-total > div{display:flex;justify-content:space-between;padding:3px 0}
 
 .empty{color:var(--hint);font-size:13px;text-align:center;padding:14px 8px}
+.hint{font-size:12px;color:var(--text2);margin-bottom:10px;line-height:1.4}
 
 .colors{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
 .color-dot{width:26px;height:26px;border-radius:50%;border:2px solid transparent;cursor:pointer}
 .color-dot.active{border-color:var(--text)}
+
+.json-area{
+  width:100%;min-height:150px;padding:10px 12px;border-radius:9px;
+  border:1px solid var(--border);background:var(--bg);color:var(--text);
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:12px;resize:vertical;outline:none;margin-bottom:8px;
+  word-break:break-all;line-height:1.4;
+}
+.json-area:focus{border-color:var(--accent)}
+
+.progress{height:6px;background:var(--bg2);border-radius:3px;overflow:hidden;margin-top:6px}
+.progress-fill{height:100%;background:var(--accent);transition:width .3s}
+
+.history-row{
+  display:flex;justify-content:space-between;font-size:12px;color:var(--text2);
+  padding:4px 0;border-bottom:1px dashed var(--border);
+}
+.history-row:last-child{border-bottom:none}
 
 .statusbar{
   position:fixed;left:0;right:0;bottom:0;z-index:30;
@@ -224,6 +254,27 @@ main{padding:10px 12px;display:flex;flex-direction:column;gap:10px}
       <div class="sec-body" id="txnBody"></div>
     </section>
 
+    <section class="section" data-sec="recurring">
+      <h2 class="sec-head" data-act="toggle-sec" data-sec="recurring">
+        <span>Постоянные расходы</span><span class="chev">▼</span>
+      </h2>
+      <div class="sec-body" id="recurringBody"></div>
+    </section>
+
+    <section class="section" data-sec="debts">
+      <h2 class="sec-head" data-act="toggle-sec" data-sec="debts">
+        <span>Долги</span><span class="chev">▼</span>
+      </h2>
+      <div class="sec-body" id="debtsBody"></div>
+    </section>
+
+    <section class="section" data-sec="accounts">
+      <h2 class="sec-head" data-act="toggle-sec" data-sec="accounts">
+        <span>Счета</span><span class="chev">▼</span>
+      </h2>
+      <div class="sec-body" id="accountsBody"></div>
+    </section>
+
     <section class="section" data-sec="forecast">
       <h2 class="sec-head" data-act="toggle-sec" data-sec="forecast">
         <span>Прогноз</span><span class="chev">▼</span>
@@ -236,6 +287,20 @@ main{padding:10px 12px;display:flex;flex-direction:column;gap:10px}
         <span>Категории</span><span class="chev">▼</span>
       </h2>
       <div class="sec-body" id="catBody"></div>
+    </section>
+
+    <section class="section" data-sec="backup">
+      <h2 class="sec-head" data-act="toggle-sec" data-sec="backup">
+        <span>Резервная копия</span><span class="chev">▼</span>
+      </h2>
+      <div class="sec-body" id="backupBody"></div>
+    </section>
+
+    <section class="section danger-zone" data-sec="danger">
+      <h2 class="sec-head" data-act="toggle-sec" data-sec="danger">
+        <span>Опасная зона</span><span class="chev">▼</span>
+      </h2>
+      <div class="sec-body" id="dangerBody"></div>
     </section>
   </main>
 
@@ -251,6 +316,6 @@ main{padding:10px 12px;display:flex;flex-direction:column;gap:10px}
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="app.js?v=1"></script>
+<script src="app-v3.js?v=3"></script>
 </body>
 </html>
