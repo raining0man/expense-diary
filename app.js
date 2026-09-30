@@ -9,7 +9,7 @@ const LS_MONTH = 'expense_diary_month_v1';
 
 // >>> ЗАМЕНИ НА СВОЙ КОНФИГ ИЗ FIREBASE <<<
 const FIREBASE_CONFIG = {
-  piKey: "AIzaSyBf73zJJP8LxzaOVyssk2wPDPyd0P3iziA",
+  apiKey: "AIzaSyBf73zJJP8LxzaOVyssk2wPDPyd0P3iziA",
   authDomain: "manager-6f1c6.firebaseapp.com",
   projectId: "manager-6f1c6",
   storageBucket: "manager-6f1c6.firebasestorage.app",
