@@ -1446,4 +1446,533 @@ document.addEventListener('input', (e) => {
   else if (t.id === 'nrNextDate') state.newRecurring.nextDate = t.value;
   else if (t.id === 'ndCounterparty') state.newDebt.counterparty = t.value;
   else if (t.id === 'ndAmount')  state.newDebt.amount = t.value;
-  else if (t.id === 'nd
+  else if (t.id === 'ndDate')    state.newDebt.date = t.value;
+  else if (t.id === 'ndDueDate') state.newDebt.dueDate = t.value;
+  else if (t.id === 'ndComment') state.newDebt.comment = t.value;
+  else if (t.id === 'filterSearch') {
+    state.ui.filterSearch = t.value;
+    saveUI();
+    const val = t.value;
+    renderTransactions();
+    const inp = document.getElementById('filterSearch');
+    if (inp) { inp.focus(); inp.setSelectionRange(val.length, val.length); }
+  }
+});
+document.addEventListener('change', (e) => {
+  if (e.target.id === 'ntRecurring') state.newTxn.recurring = e.target.checked;
+});
+
+/* ============================================================
+   ОБРАБОТЧИКИ ДЕЙСТВИЙ
+   ============================================================ */
+
+/* ----- Операции ----- */
+async function handleAddTxn() {
+  const nt = state.newTxn;
+  if (!nt.accountId) { toast('Выбери счёт', 'err'); return; }
+  if (!nt.categoryId) { toast('Выбери категорию', 'err'); return; }
+  const amount = num(nt.amount);
+  if (!(amount > 0)) { toast('Укажи сумму больше нуля', 'err'); return; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(nt.date)) { toast('Укажи дату', 'err'); return; }
+
+  const txn = {
+    id: uid(),
+    categoryId: nt.categoryId,
+    accountId: nt.accountId,
+    type: nt.type,
+    amount,
+    date: nt.date,
+    comment: nt.comment.trim(),
+    recurring: !!nt.recurring,
+    createdAt: Date.now()
+  };
+  if (txn.recurring) txn.skipped = [];
+
+  state.data.transactions.push(txn);
+  state.newTxn.amount = '';
+  state.newTxn.comment = '';
+  toast('Добавлено', 'ok');
+  renderAll();
+  await save();
+}
+
+async function handleSaveEdit(id) {
+  const txn = state.data.transactions.find(x => x.id === id);
+  if (!txn) return;
+  const amount = num(document.getElementById('editAmount').value);
+  const date = document.getElementById('editDate').value;
+  const comment = document.getElementById('editComment').value;
+  const recurring = document.getElementById('editRecurring').checked;
+  if (!(amount > 0)) { toast('Сумма должна быть больше нуля', 'err'); return; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { toast('Некорректная дата', 'err'); return; }
+  if (!txn.categoryId) { toast('Выбери категорию', 'err'); return; }
+  if (!txn.accountId) { toast('Выбери счёт', 'err'); return; }
+
+  txn.amount = amount;
+  txn.date = date;
+  txn.comment = comment.trim();
+  if (recurring && !txn.recurring) { txn.recurring = true; txn.skipped = []; }
+  if (!recurring && txn.recurring) { delete txn.recurring; delete txn.skipped; }
+
+  state.editingTxn = null;
+  toast('Сохранено', 'ok');
+  renderAll();
+  await save();
+}
+
+async function handleDeleteTxn(id) {
+  const idx = state.data.transactions.findIndex(x => x.id === id);
+  if (idx === -1) return;
+  const txn = state.data.transactions[idx];
+  const tMonth = txn.date.slice(0, 7);
+  const isVirtual = txn.recurring && state.currentMonth !== tMonth;
+
+  if (txn.recurring && isVirtual) {
+    if (!confirm('Пропустить эту повторяющуюся операцию в ' + monthLabelFull(state.currentMonth) + '?')) return;
+    if (!Array.isArray(txn.skipped)) txn.skipped = [];
+    if (txn.skipped.indexOf(state.currentMonth) === -1) txn.skipped.push(state.currentMonth);
+    toast('Пропущено в этом месяце', 'ok');
+  } else if (txn.recurring) {
+    if (!confirm('Удалить всю серию повторений этой операции?')) return;
+    state.data.transactions.splice(idx, 1);
+    toast('Серия удалена', 'ok');
+  } else {
+    if (!confirm('Удалить операцию?')) return;
+    state.data.transactions.splice(idx, 1);
+    toast('Удалено', 'ok');
+  }
+  state.editingTxn = null;
+  renderAll();
+  await save();
+}
+
+/* ----- Счета ----- */
+async function handleAddAccount() {
+  const na = state.newAccount;
+  if (!na.name.trim()) { toast('Введи название', 'err'); return; }
+  state.data.accounts.push({
+    id: uid(),
+    name: na.name.trim(),
+    type: na.type || 'other',
+    color: na.color || COLORS[3],
+    initialBalance: num(na.initialBalance)
+  });
+  state.newAccount = { name:'', type:'cash', color: COLORS[3], initialBalance:'' };
+  toast('Счёт добавлен', 'ok');
+  renderAll();
+  await save();
+}
+
+async function handleSaveAccount(id) {
+  const a = state.data.accounts.find(x => x.id === id);
+  if (!a) return;
+  const name = (document.getElementById('eaName').value || '').trim();
+  if (!name) { toast('Введи название', 'err'); return; }
+  a.name = name;
+  a.initialBalance = num(document.getElementById('eaInitial').value);
+  state.editingAccount = null;
+  toast('Сохранено', 'ok');
+  renderAll();
+  await save();
+}
+
+async function handleDeleteAccount(id) {
+  const a = state.data.accounts.find(x => x.id === id);
+  if (!a) return;
+  const used = state.data.transactions.filter(t => t.accountId === id).length
+             + state.data.recurringExpenses.filter(r => r.accountId === id).length;
+  if (used > 0) {
+    if (!confirm('К счёту привязано ' + used + ' операций/платежей. Удалить счёт? Привязки будут сброшены.')) return;
+  } else {
+    if (!confirm('Удалить счёт?')) return;
+  }
+  state.data.accounts = state.data.accounts.filter(x => x.id !== id);
+  for (const t of state.data.transactions) if (t.accountId === id) t.accountId = null;
+  for (const r of state.data.recurringExpenses) if (r.accountId === id) r.accountId = null;
+  toast('Удалено', 'ok');
+  renderAll();
+  await save();
+}
+
+/* ----- Категории ----- */
+async function handleAddCat() {
+  const name = (state._newCatName || '').trim();
+  const type = state._newCatType || 'expense';
+  const color = state.editingCatColor || COLORS[0];
+  if (!name) { toast('Введи название', 'err'); return; }
+  if (state.data.categories.some(c => c.name.toLowerCase() === name.toLowerCase() && c.type === type)) {
+    toast('Такая категория уже есть', 'err'); return;
+  }
+  state.data.categories.push({ id: uid(), name, type, color });
+  state._newCatName = '';
+  state.editingCatColor = COLORS[(state.data.categories.length) % COLORS.length];
+  toast('Категория добавлена', 'ok');
+  renderAll();
+  await save();
+}
+
+async function handleSaveCat(id) {
+  const c = state.data.categories.find(x => x.id === id);
+  if (!c) return;
+  const name = (document.getElementById('editCatName').value || '').trim();
+  if (!name) { toast('Введи название', 'err'); return; }
+  c.name = name;
+  state.editingCat = null;
+  toast('Сохранено', 'ok');
+  renderAll();
+  await save();
+}
+
+async function handleDeleteCat(id) {
+  const c = state.data.categories.find(x => x.id === id);
+  if (!c) return;
+  const used = state.data.transactions.filter(t => t.categoryId === id).length;
+  const msg = used > 0
+    ? 'У категории ' + used + ' операций. Удалить категорию? Операции останутся без категории.'
+    : 'Удалить категорию?';
+  if (!confirm(msg)) return;
+  state.data.categories = state.data.categories.filter(x => x.id !== id);
+  for (const t of state.data.transactions) if (t.categoryId === id) t.categoryId = null;
+  toast('Удалено', 'ok');
+  renderAll();
+  await save();
+}
+
+/* ----- Постоянные расходы ----- */
+async function handleAddRecurring() {
+  const nr = state.newRecurring;
+  if (!nr.name.trim()) { toast('Введи название', 'err'); return; }
+  if (!nr.accountId) { toast('Выбери счёт', 'err'); return; }
+  const amount = num(nr.amount);
+  if (!(amount > 0)) { toast('Укажи сумму больше нуля', 'err'); return; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(nr.nextDate)) { toast('Укажи дату', 'err'); return; }
+
+  state.data.recurringExpenses.push({
+    id: uid(),
+    name: nr.name.trim(),
+    accountId: nr.accountId,
+    categoryId: nr.categoryId || null,
+    amount,
+    nextDate: nr.nextDate,
+    period: nr.period || 'monthly',
+    history: []
+  });
+  state.newRecurring = { name:'', accountId: nr.accountId, categoryId: null, amount:'', nextDate: todayISO(), period: nr.period };
+  toast('Постоянный расход добавлен', 'ok');
+  renderAll();
+  await save();
+}
+
+async function handleSaveRecurring(id) {
+  const r = state.data.recurringExpenses.find(x => x.id === id);
+  if (!r) return;
+  const name = (document.getElementById('erName').value || '').trim();
+  const amount = num(document.getElementById('erAmount').value);
+  const nextDate = document.getElementById('erNextDate').value;
+  if (!name) { toast('Введи название', 'err'); return; }
+  if (!(amount > 0)) { toast('Сумма > 0', 'err'); return; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(nextDate)) { toast('Некорректная дата', 'err'); return; }
+  r.name = name;
+  r.amount = amount;
+  r.nextDate = nextDate;
+  state.editingRecurring = null;
+  toast('Сохранено', 'ok');
+  renderAll();
+  await save();
+}
+
+async function handleDeleteRecurring(id) {
+  const r = state.data.recurringExpenses.find(x => x.id === id);
+  if (!r) return;
+  if (!confirm('Удалить постоянный расход «' + r.name + '»? История платежей тоже удалится.')) return;
+  state.data.recurringExpenses = state.data.recurringExpenses.filter(x => x.id !== id);
+  toast('Удалено', 'ok');
+  renderAll();
+  await save();
+}
+
+async function handlePayRecurring(id) {
+  const r = state.data.recurringExpenses.find(x => x.id === id);
+  if (!r) return;
+  const paidAmount = num(document.getElementById('payRecAmount').value);
+  const paidDate = document.getElementById('payRecDate').value;
+  const addTxn = document.getElementById('payRecAddTxn').checked;
+  if (!(paidAmount > 0)) { toast('Сумма > 0', 'err'); return; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(paidDate)) { toast('Некорректная дата', 'err'); return; }
+
+  // Записываем в историю
+  r.history.push({
+    plannedAmount: r.amount,
+    paidAmount: paidAmount,
+    paidDate: paidDate,
+    comment: ''
+  });
+
+  // Создаём операцию, если нужно
+  if (addTxn) {
+    let categoryId = r.categoryId;
+    // Если у постоянного расхода нет категории, ищем категорию по имени или создаём «Обязательные»
+    if (!categoryId) {
+      let cat = state.data.categories.find(c => c.name.toLowerCase() === 'обязательные' && c.type === 'expense');
+      if (!cat) {
+        cat = { id: uid(), name: 'Обязательные', type: 'expense', color: COLORS[6] };
+        state.data.categories.push(cat);
+      }
+      categoryId = cat.id;
+    }
+    state.data.transactions.push({
+      id: uid(),
+      categoryId: categoryId,
+      accountId: r.accountId,
+      type: 'expense',
+      amount: paidAmount,
+      date: paidDate,
+      comment: r.name,
+      recurring: false,
+      createdAt: Date.now()
+    });
+  }
+
+  // Сдвигаем nextDate на следующий период
+  if (r.period === 'monthly')      r.nextDate = addMonthsISO(r.nextDate, 1);
+  else if (r.period === 'yearly')  r.nextDate = addYearsISO(r.nextDate, 1);
+  else if (r.period === 'weekly')  r.nextDate = addDaysISO(r.nextDate, 7);
+  // при 'once' — дата остаётся, платёж одноразовый
+
+  state.payingRecurring = null;
+  toast('Оплата записана', 'ok');
+  renderAll();
+  await save();
+}
+
+/* ----- Долги ----- */
+async function handleAddDebt() {
+  const nd = state.newDebt;
+  if (!nd.counterparty.trim()) { toast('Укажи контрагента', 'err'); return; }
+  const amount = num(nd.amount);
+  if (!(amount > 0)) { toast('Сумма > 0', 'err'); return; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(nd.date)) { toast('Некорректная дата', 'err'); return; }
+
+  state.data.debts.push({
+    id: uid(),
+    direction: nd.direction,
+    counterparty: nd.counterparty.trim(),
+    amount,
+    paid: 0,
+    date: nd.date,
+    dueDate: /^\d{4}-\d{2}-\d{2}$/.test(nd.dueDate) ? nd.dueDate : '',
+    comment: nd.comment.trim(),
+    closed: false,
+    payments: []
+  });
+  state.newDebt = { direction: nd.direction, counterparty:'', amount:'', date: todayISO(), dueDate:'', comment:'' };
+  toast('Долг добавлен', 'ok');
+  renderAll();
+  await save();
+}
+
+async function handleSaveDebt(id) {
+  const d = state.data.debts.find(x => x.id === id);
+  if (!d) return;
+  const counterparty = (document.getElementById('edCounterparty').value || '').trim();
+  const amount = num(document.getElementById('edAmount').value);
+  const paid = num(document.getElementById('edPaid').value);
+  const date = document.getElementById('edDate').value;
+  const dueDate = document.getElementById('edDueDate').value;
+  const comment = document.getElementById('edComment').value;
+  if (!counterparty) { toast('Укажи контрагента', 'err'); return; }
+  if (!(amount > 0)) { toast('Сумма > 0', 'err'); return; }
+  d.counterparty = counterparty;
+  d.amount = amount;
+  d.paid = paid;
+  d.date = date;
+  d.dueDate = /^\d{4}-\d{2}-\d{2}$/.test(dueDate) ? dueDate : '';
+  d.comment = comment.trim();
+  d.closed = d.paid >= d.amount;
+  state.editingDebt = null;
+  toast('Сохранено', 'ok');
+  renderAll();
+  await save();
+}
+
+async function handleDeleteDebt(id) {
+  const d = state.data.debts.find(x => x.id === id);
+  if (!d) return;
+  if (!confirm('Удалить долг «' + (d.counterparty || 'без имени') + '»?')) return;
+  state.data.debts = state.data.debts.filter(x => x.id !== id);
+  toast('Удалено', 'ok');
+  renderAll();
+  await save();
+}
+
+async function handlePayDebt(id) {
+  const d = state.data.debts.find(x => x.id === id);
+  if (!d) return;
+  const amount = num(document.getElementById('payDebtAmount').value);
+  const date = document.getElementById('payDebtDate').value;
+  if (!(amount > 0)) { toast('Сумма > 0', 'err'); return; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { toast('Некорректная дата', 'err'); return; }
+  d.paid += amount;
+  d.payments.push({ date, amount, comment: '' });
+  if (d.paid >= d.amount) d.closed = true;
+  state.payingDebt = null;
+  toast('Платёж записан', 'ok');
+  renderAll();
+  await save();
+}
+
+/* ----- Резервное копирование ----- */
+function exportBackup() {
+  const json = JSON.stringify(state.data, null, 2);
+  const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const d = new Date();
+  const stamp = d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'expense-diary-' + stamp + '.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast('Файл сохранён', 'ok');
+}
+
+function triggerImport() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,application/json';
+  input.style.display = 'none';
+  input.onchange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.target.result);
+        applyImport(parsed);
+      } catch (err) {
+        console.error('JSON parse error', err);
+        toast('Неверный формат JSON', 'err');
+      }
+    };
+    reader.readAsText(file);
+  };
+  document.body.appendChild(input);
+  input.click();
+  setTimeout(() => document.body.removeChild(input), 1000);
+}
+
+async function applyImport(parsed) {
+  if (!parsed || typeof parsed !== 'object') { toast('Неверный формат данных', 'err'); return; }
+  if (!confirm('Заменить все текущие данные загруженными из файла?\nЭто действие перезапишет данные во всех устройствах.')) return;
+
+  const norm = normalizeData(parsed);
+  norm.version = Math.max(state.data.version || 0, num(norm.version)) + 1;
+  state.data = norm;
+
+  state.editingTxn = null;
+  state.editingCat = null;
+  state.editingAccount = null;
+  state.editingDebt = null;
+  state.editingRecurring = null;
+  state.payingRecurring = null;
+  state.payingDebt = null;
+  state._showJson = false;
+  state._showPasteJson = false;
+  state._pasteJsonValue = '';
+
+  toast('Данные загружены', 'ok');
+  renderAll();
+  await save();
+}
+
+async function copyJsonToClipboard() {
+  const ta = document.getElementById('jsonBox');
+  if (!ta) return;
+  const text = ta.value;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      toast('JSON скопирован', 'ok');
+    } else {
+      ta.select(); document.execCommand('copy'); toast('JSON скопирован', 'ok');
+    }
+  } catch (e) {
+    ta.select();
+    try { document.execCommand('copy'); toast('JSON скопирован', 'ok'); }
+    catch (err) { toast('Не удалось скопировать. Выдели вручную.', 'err'); }
+  }
+}
+
+async function applyPasteJson() {
+  const raw = (state._pasteJsonValue || '').trim();
+  if (!raw) { toast('Поле пустое', 'err'); return; }
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch (e) { toast('Неверный JSON', 'err'); return; }
+  await applyImport(parsed);
+}
+
+/* ----- Опасная зона ----- */
+async function handleClearAll() {
+  if (!confirm('Очистить ВСЕ данные?\nСчета, категории, операции, долги и постоянные расходы будут стёрты.')) return;
+  if (!confirm('Точно? Это действие необратимо и синхронизируется на все устройства.')) return;
+
+  state.data = normalizeData({
+    accounts: defaultAccounts(),
+    categories: defaultCategories(),
+    transactions: [], debts: [], recurringExpenses: [], version: 0
+  });
+  state.editingTxn = null;
+  state.editingCat = null;
+  state.editingAccount = null;
+  state.editingDebt = null;
+  state.editingRecurring = null;
+  state.payingRecurring = null;
+  state.payingDebt = null;
+  state._showJson = false;
+  state._showPasteJson = false;
+  state._pasteJsonValue = '';
+
+  toast('Все данные очищены', 'ok');
+  renderAll();
+  await save();
+}
+
+/* ============================================================
+   СТАРТ
+   ============================================================ */
+async function init() {
+  try {
+    const raw = localStorage.getItem(LS_DATA);
+    if (raw) state.data = normalizeData(JSON.parse(raw));
+    else state.data = normalizeData({
+      accounts: defaultAccounts(),
+      categories: defaultCategories(),
+      transactions: [], debts: [], recurringExpenses: [], version: 1
+    });
+  } catch (e) {
+    state.data = normalizeData({
+      accounts: defaultAccounts(),
+      categories: defaultCategories(),
+      transactions: [], debts: [], recurringExpenses: [], version: 1
+    });
+  }
+
+  renderAll();
+  setSync('off', 'Ожидание Firebase…');
+
+  if (typeof firebase !== 'undefined' && FIREBASE_CONFIG.apiKey !== 'PASTE_API_KEY') {
+    await initFirebase();
+  } else {
+    setSync('off', 'Локальный режим (нет конфига Firebase)');
+    toast('Firebase не настроен — работаем локально', 'err');
+  }
+
+  applyCollapsed();
+}
+
+document.addEventListener('DOMContentLoaded', init);
