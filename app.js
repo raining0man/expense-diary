@@ -1,8 +1,8 @@
 /* ============================================================
-   Дневник расходов v6
-   + счета, долги, постоянные расходы, частичные платежи, soft-delete
-   + переводы между счетами (не влияют на общий баланс)
-   + фикс верстки карточек постоянных расходов
+   Дневник расходов v7
+   + счета, постоянные расходы, частичные платежи, soft-delete
+   + переводы между счетами
+   + долги со счётом и автоматическими транзакциями
    ============================================================ */
 
 const AMP = String.fromCharCode(38);
@@ -29,7 +29,6 @@ const MONTHS_RU_SHORT = ['янв','фев','мар','апр','май','июн',
 
 const ACCOUNT_TYPES = { cash:'Наличные', card:'Карта', bank:'Банк', other:'Другое' };
 const PERIOD_LABELS = { monthly:'Ежемесячно', yearly:'Ежегодно', weekly:'Еженедельно', once:'Разово' };
-const TXN_TYPES = { expense:'Расход', income:'Доход', transfer:'Перевод' };
 
 /* ---------- Состояние ---------- */
 const state = {
@@ -59,10 +58,11 @@ const state = {
     recurring: false
   },
   newAccount: { name:'', type:'cash', color: COLORS[3], initialBalance:'' },
-  newDebt: { direction:'to_me', counterparty:'', amount:'', date: todayISO(), dueDate:'', comment:'' },
+  newDebt: { direction:'to_me', counterparty:'', amount:'', date: todayISO(), dueDate:'', comment:'', accountId:null },
   newRecurring: { name:'', accountId:null, categoryId:null, amount:'', nextDate: todayISO(), period:'monthly' },
   payingRecurring: null,
   payingDebt: null,
+  payingDebtAccountId: null,
   _newCatName: '', _newCatType: 'expense',
   _showJson: false, _showPasteJson: false, _pasteJsonValue: ''
 };
@@ -273,10 +273,12 @@ function normalizeData(d) {
       dueDate: /^\d{4}-\d{2}-\d{2}$/.test(x.dueDate) ? x.dueDate : '',
       comment: String(x.comment || ''),
       closed: !!x.closed,
+      accountId: x.accountId || defaultAccId,
       payments: Array.isArray(x.payments) ? x.payments.map(p => ({
         date: /^\d{4}-\d{2}-\d{2}$/.test(p.date) ? p.date : todayISO(),
         amount: num(p.amount),
-        comment: String(p.comment || '')
+        comment: String(p.comment || ''),
+        accountId: p.accountId || null
       })) : []
     }));
   }
@@ -341,6 +343,25 @@ function accountBalance(accId) {
     }
   }
   return bal;
+}
+
+/* Категории для автоматических операций по долгам.
+   Создаются при первом использовании, если их нет. */
+function ensureDebtCategory(kind) {
+  // kind: 'issued' | 'received' | 'returned_to_me' | 'returned_by_me'
+  const spec = {
+    issued:          { name: 'Долги выданные',        type: 'expense', color: COLORS[5] },
+    received:        { name: 'Долги полученные',      type: 'income',  color: COLORS[8] },
+    returned_to_me:  { name: 'Возврат долгов (мне)',  type: 'income',  color: COLORS[7] },
+    returned_by_me:  { name: 'Возврат долгов (мной)', type: 'expense', color: COLORS[6] }
+  }[kind];
+  if (!spec) return null;
+  let cat = state.data.categories.find(c => !c.deleted && c.name === spec.name && c.type === spec.type);
+  if (!cat) {
+    cat = { id: uid(), name: spec.name, type: spec.type, color: spec.color, deleted: false };
+    state.data.categories.push(cat);
+  }
+  return cat.id;
 }
 
 /* ---------- Разворачивание повторяющихся операций ---------- */
@@ -1005,16 +1026,22 @@ function renderDebts() {
   const el = document.getElementById('debtsBody');
   const debts = state.data.debts;
   const nd = state.newDebt;
+  const accounts = activeAccounts();
+
+  if (!nd.accountId && accounts.length) nd.accountId = accounts[0].id;
 
   const renderList = (direction, title) => {
     const list = debts.filter(d => d.direction === direction);
     let s = '<div class="subhead">' + title + '</div>';
     if (list.length === 0) { s += '<div class="empty">Пусто</div>'; return s; }
     for (const d of list) {
-      if (state.editingDebt === d.id) { s += renderDebtEditForm(d); continue; }
+      if (state.editingDebt === d.id) { s += renderDebtEditForm(d, accounts); continue; }
       const remain = d.amount - d.paid;
       const pct = d.amount > 0 ? Math.min(100, d.paid / d.amount * 100) : 0;
       const closed = d.closed || remain <= 0;
+      const acc = getAccount(d.accountId);
+      const accName = acc ? acc.name : '—';
+      const accColor = acc ? acc.color : '#999';
       s +=
         '<div class="txn">' +
           '<div class="txn-cat">' +
@@ -1022,7 +1049,8 @@ function renderDebts() {
             (closed ? '<span class="badge ok">Закрыт</span>' : '<span class="badge warn">Открыт</span>') +
           '</div>' +
           '<div class="txn-amt ' + (direction === 'to_me' ? 'income' : 'expense') + '">' + fmtMoney(remain) + '</div>' +
-          '<div class="txn-cmt">Всего: ' + fmtMoney(d.amount) + ' · оплачено: ' + fmtMoney(d.paid) + ' · с ' + dateLabel(d.date) +
+          '<div class="txn-cmt">Счёт: <span class="dot-color" style="background:' + accColor + ';margin-right:4px"></span>' + escapeHtml(accName) +
+            ' · всего: ' + fmtMoney(d.amount) + ' · оплачено: ' + fmtMoney(d.paid) + ' · с ' + dateLabel(d.date) +
             (d.dueDate ? ' · срок ' + dateLabel(d.dueDate) : '') +
             (d.comment ? '<br>' + escapeHtml(d.comment) : '') +
           '</div>' +
@@ -1032,13 +1060,15 @@ function renderDebts() {
             '<button class="mini yellow" data-act="edit-debt" data-id="' + d.id + '" title="Редактировать">&#9998;</button>' +
             '<button class="mini red" data-act="del-debt" data-id="' + d.id + '" title="Удалить">&#10005;</button>' +
           '</div>' +
-          (state.payingDebt === d.id ? renderDebtPayForm(d) : '') +
+          (state.payingDebt === d.id ? renderDebtPayForm(d, accounts) : '') +
           (d.payments.length
             ? '<div style="grid-column:1/-1;margin-top:6px">' +
                 '<div class="subhead" style="margin:6px 0 4px">История платежей</div>' +
-                d.payments.slice().reverse().map(p =>
-                  '<div class="history-row"><span>' + dateLabel(p.date) + '</span><span>' + fmtMoney(p.amount) + '</span></div>'
-                ).join('') +
+                d.payments.slice().reverse().map(p => {
+                  const pAcc = p.accountId ? getAccount(p.accountId) : null;
+                  const pAccName = pAcc ? pAcc.name : '';
+                  return '<div class="history-row"><span>' + dateLabel(p.date) + (pAccName ? ' · ' + escapeHtml(pAccName) : '') + '</span><span>' + fmtMoney(p.amount) + '</span></div>';
+                }).join('') +
               '</div>'
             : '') +
         '</div>';
@@ -1050,6 +1080,10 @@ function renderDebts() {
   html += renderList('to_me', 'Мне должны');
   html += renderList('from_me', 'Я должен');
 
+  const directionLabel = nd.direction === 'to_me'
+    ? 'Счёт, с которого выдаёшь'
+    : 'Счёт, на который получаешь';
+
   html +=
     '<div class="subhead">Новый долг</div>' +
     '<div class="type-toggle">' +
@@ -1060,19 +1094,46 @@ function renderDebts() {
     '<label class="field"><span>Сумма</span><input type="number" inputmode="decimal" step="0.01" min="0" id="ndAmount" value="' + escapeAttr(nd.amount) + '" placeholder="0"></label>' +
     '<label class="field"><span>Дата возникновения</span><input type="date" id="ndDate" value="' + escapeAttr(nd.date) + '"></label>' +
     '<label class="field"><span>Срок возврата (опционально)</span><input type="date" id="ndDueDate" value="' + escapeAttr(nd.dueDate) + '"></label>' +
+    '<div class="subhead" style="margin-top:0">' + directionLabel + '</div>' +
+    '<div class="cat-grid">' +
+      (accounts.length
+        ? accounts.map(a =>
+            '<button class="cat-btn ' + (nd.accountId === a.id ? 'active' : '') + '" data-act="nd-pick-acc" data-id="' + a.id + '" style="--c:' + a.color + '">' +
+              '<span class="dot-color" style="background:' + a.color + '"></span><span>' + escapeHtml(a.name) + '</span>' +
+            '</button>'
+          ).join('')
+        : '<div class="empty">Сначала создай счёт</div>') +
+    '</div>' +
     '<label class="field"><span>Комментарий</span><input type="text" id="ndComment" value="' + escapeAttr(nd.comment) + '" placeholder="необязательно"></label>' +
-    '<button class="btn primary" data-act="add-debt">Добавить долг</button>';
+    '<button class="btn primary" data-act="add-debt">Добавить долг</button>' +
+    '<div class="hint" style="margin-top:8px">При добавлении автоматически создаётся ' +
+      (nd.direction === 'to_me' ? 'расход' : 'доход') +
+      ' по указанному счёту с категорией «' +
+      (nd.direction === 'to_me' ? 'Долги выданные' : 'Долги полученные') +
+      '».</div>';
 
   el.innerHTML = html;
 }
 
-function renderDebtEditForm(d) {
+function renderDebtEditForm(d, accounts) {
+  const directionLabel = d.direction === 'to_me'
+    ? 'Счёт, с которого выдал'
+    : 'Счёт, на который получил';
   return '<div class="txn" style="display:block">' +
+    '<div class="hint">Направление долга изменить нельзя — если ошиблись, удалите и создайте заново. Счёт можно поменять: он будет использоваться для следующих платежей.</div>' +
     '<label class="field"><span>Контрагент</span><input type="text" id="edCounterparty" value="' + escapeAttr(d.counterparty) + '"></label>' +
     '<label class="field"><span>Сумма (общая)</span><input type="number" inputmode="decimal" step="0.01" min="0" id="edAmount" value="' + escapeAttr(d.amount) + '"></label>' +
     '<label class="field"><span>Уже оплачено</span><input type="number" inputmode="decimal" step="0.01" min="0" id="edPaid" value="' + escapeAttr(d.paid) + '"></label>' +
     '<label class="field"><span>Дата</span><input type="date" id="edDate" value="' + escapeAttr(d.date) + '"></label>' +
     '<label class="field"><span>Срок (опционально)</span><input type="date" id="edDueDate" value="' + escapeAttr(d.dueDate) + '"></label>' +
+    '<div class="subhead" style="margin-top:0">' + directionLabel + '</div>' +
+    '<div class="cat-grid">' +
+      accounts.map(a =>
+        '<button class="cat-btn ' + (d.accountId === a.id ? 'active' : '') + '" data-act="ed-pick-acc" data-id="' + d.id + '" data-acc="' + a.id + '" style="--c:' + a.color + '">' +
+          '<span class="dot-color" style="background:' + a.color + '"></span><span>' + escapeHtml(a.name) + '</span>' +
+        '</button>'
+      ).join('') +
+    '</div>' +
     '<label class="field"><span>Комментарий</span><input type="text" id="edComment" value="' + escapeAttr(d.comment) + '"></label>' +
     '<div style="display:flex;gap:6px">' +
       '<button class="btn ok" style="flex:1" data-act="save-debt" data-id="' + d.id + '">Сохранить</button>' +
@@ -1081,12 +1142,33 @@ function renderDebtEditForm(d) {
   '</div>';
 }
 
-function renderDebtPayForm(d) {
+function renderDebtPayForm(d, accounts) {
   const remain = d.amount - d.paid;
+  const isReturn = d.direction === 'to_me';
+  const accLabel = isReturn ? 'Счёт, на который вернули' : 'Счёт, с которого вернул';
+
+  // Дефолт: счёт долга, если он ещё активен; иначе первый активный
+  let defaultAccId = state.payingDebtAccountId;
+  if (!defaultAccId) {
+    const dAcc = getAccount(d.accountId);
+    defaultAccId = (dAcc && !dAcc.deleted) ? dAcc.id : (accounts[0] ? accounts[0].id : null);
+  }
+
   return '<div style="grid-column:1/-1;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:8px">' +
     '<div style="font-size:12px;color:var(--text2);margin-bottom:6px">Остаток по долгу: ' + fmtMoney(remain) + '</div>' +
     '<label class="field"><span>Сумма платежа</span><input type="number" inputmode="decimal" step="0.01" min="0" id="payDebtAmount" value="' + escapeAttr(remain) + '"></label>' +
     '<label class="field"><span>Дата платежа</span><input type="date" id="payDebtDate" value="' + todayISO() + '"></label>' +
+    '<div class="subhead" style="margin-top:0">' + accLabel + '</div>' +
+    '<div class="cat-grid">' +
+      accounts.map(a =>
+        '<button class="cat-btn ' + (defaultAccId === a.id ? 'active' : '') + '" data-act="pay-debt-acc" data-id="' + d.id + '" data-acc="' + a.id + '" style="--c:' + a.color + '">' +
+          '<span class="dot-color" style="background:' + a.color + '"></span><span>' + escapeHtml(a.name) + '</span>' +
+        '</button>'
+      ).join('') +
+    '</div>' +
+    '<div class="hint">' +
+      (isReturn ? 'На этот счёт поступит доход с категорией «Возврат долгов (мне)».' : 'С этого счёта уйдёт расход с категорией «Возврат долгов (мной)».') +
+    '</div>' +
     '<div style="display:flex;gap:6px">' +
       '<button class="btn ok" style="flex:1" data-act="confirm-pay-debt" data-id="' + d.id + '">Подтвердить</button>' +
       '<button class="btn" style="flex:1" data-act="cancel-pay-debt">Отмена</button>' +
@@ -1450,7 +1532,6 @@ document.addEventListener('click', (e) => {
     if (!txn) return;
     const newType = t.dataset.type;
     if (newType === 'transfer') {
-      // был расход/доход -> становится переводом
       txn.type = 'transfer';
       txn.recurring = false;
       delete txn.skipped;
@@ -1515,13 +1596,29 @@ document.addEventListener('click', (e) => {
 
   /* Долги */
   if (act === 'nd-dir') { state.newDebt.direction = t.dataset.dir; renderDebts(); return; }
+  if (act === 'nd-pick-acc') { state.newDebt.accountId = t.dataset.id; renderDebts(); return; }
   if (act === 'add-debt') { handleAddDebt(); return; }
-  if (act === 'edit-debt')   { state.editingDebt = t.dataset.id; renderDebts(); return; }
+  if (act === 'edit-debt')   { state.editingDebt = t.dataset.id; state.payingDebt = null; renderDebts(); return; }
   if (act === 'cancel-debt') { state.editingDebt = null; renderDebts(); return; }
+  if (act === 'ed-pick-acc') {
+    const d = state.data.debts.find(x => x.id === t.dataset.id);
+    if (d) { d.accountId = t.dataset.acc; renderDebts(); }
+    return;
+  }
   if (act === 'save-debt')   { handleSaveDebt(t.dataset.id); return; }
   if (act === 'del-debt')    { handleDeleteDebt(t.dataset.id); return; }
-  if (act === 'pay-debt')    { state.payingDebt = (state.payingDebt === t.dataset.id) ? null : t.dataset.id; renderDebts(); return; }
-  if (act === 'cancel-pay-debt') { state.payingDebt = null; renderDebts(); return; }
+  if (act === 'pay-debt') {
+    if (state.payingDebt === t.dataset.id) { state.payingDebt = null; state.payingDebtAccountId = null; }
+    else {
+      state.payingDebt = t.dataset.id;
+      const d = state.data.debts.find(x => x.id === t.dataset.id);
+      const dAcc = d ? getAccount(d.accountId) : null;
+      state.payingDebtAccountId = (dAcc && !dAcc.deleted) ? dAcc.id : (activeAccounts()[0] ? activeAccounts()[0].id : null);
+    }
+    renderDebts(); return;
+  }
+  if (act === 'cancel-pay-debt') { state.payingDebt = null; state.payingDebtAccountId = null; renderDebts(); return; }
+  if (act === 'pay-debt-acc') { state.payingDebtAccountId = t.dataset.acc; renderDebts(); return; }
   if (act === 'confirm-pay-debt') { handlePayDebt(t.dataset.id); return; }
 
   /* Счета */
@@ -1756,9 +1853,10 @@ async function handleDeleteAccount(id) {
     return;
   }
   const used = state.data.transactions.filter(t => t.accountId === id || t.toAccountId === id).length
-             + state.data.recurringExpenses.filter(r => r.accountId === id).length;
+             + state.data.recurringExpenses.filter(r => r.accountId === id).length
+             + state.data.debts.filter(d => d.accountId === id).length;
   const msg = used > 0
-    ? 'К счёту привязано ' + used + ' операций/платежей. Удалить счёт? Операции останутся с этим счётом в истории.'
+    ? 'К счёту привязано ' + used + ' операций/платежей/долгов. Удалить счёт? Операции останутся с этим счётом в истории.'
     : 'Удалить счёт?';
   if (!confirm(msg)) return;
   a.deleted = true;
@@ -1964,15 +2062,43 @@ async function handleAddDebt() {
   const amount = num(nd.amount);
   if (!(amount > 0)) { toast('Сумма > 0', 'err'); return; }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(nd.date)) { toast('Некорректная дата', 'err'); return; }
+  if (!nd.accountId) { toast('Выбери счёт', 'err'); return; }
 
+  const debtId = uid();
+  const isToMe = nd.direction === 'to_me';
+
+  // 1) Создаём долг
   state.data.debts.push({
-    id: uid(), direction: nd.direction,
+    id: debtId,
+    direction: nd.direction,
     counterparty: nd.counterparty.trim(),
-    amount, paid: 0, date: nd.date,
+    amount: amount,
+    paid: 0,
+    date: nd.date,
     dueDate: /^\d{4}-\d{2}-\d{2}$/.test(nd.dueDate) ? nd.dueDate : '',
-    comment: nd.comment.trim(), closed: false, payments: []
+    comment: nd.comment.trim(),
+    closed: false,
+    accountId: nd.accountId,
+    payments: []
   });
-  state.newDebt = { direction: nd.direction, counterparty:'', amount:'', date: todayISO(), dueDate:'', comment:'' };
+
+  // 2) Создаём автоматическую транзакцию:
+  //    to_me  -> расход с указанного счёта (деньги ушли)
+  //    from_me-> доход на указанный счёт (деньги пришли)
+  const categoryId = ensureDebtCategory(isToMe ? 'issued' : 'received');
+  state.data.transactions.push({
+    id: uid(),
+    type: isToMe ? 'expense' : 'income',
+    accountId: nd.accountId,
+    categoryId: categoryId,
+    amount: amount,
+    date: nd.date,
+    comment: (isToMe ? 'Дал в долг: ' : 'Взял в долг: ') + nd.counterparty.trim() + (nd.comment.trim() ? ' · ' + nd.comment.trim() : ''),
+    recurring: false,
+    createdAt: Date.now()
+  });
+
+  state.newDebt = { direction: nd.direction, counterparty:'', amount:'', date: todayISO(), dueDate:'', comment:'', accountId: nd.accountId };
   toast('Долг добавлен', 'ok');
   renderAll();
   await save();
@@ -2003,8 +2129,12 @@ async function handleSaveDebt(id) {
 async function handleDeleteDebt(id) {
   const d = state.data.debts.find(x => x.id === id);
   if (!d) return;
-  if (!confirm('Удалить долг «' + (d.counterparty || 'без имени') + '»?')) return;
+  const msg = 'Удалить долг «' + (d.counterparty || 'без имени') + '»?\n\n' +
+    'Операции по счёту, созданные при выдаче/получении и при платежах, останутся в истории — при необходимости удали их вручную в разделе «Операции за месяц».';
+  if (!confirm(msg)) return;
   state.data.debts = state.data.debts.filter(x => x.id !== id);
+  state.payingDebt = null;
+  state.payingDebtAccountId = null;
   toast('Удалено', 'ok');
   renderAll();
   await save();
@@ -2017,10 +2147,38 @@ async function handlePayDebt(id) {
   const date = document.getElementById('payDebtDate').value;
   if (!(amount > 0)) { toast('Сумма > 0', 'err'); return; }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { toast('Некорректная дата', 'err'); return; }
+
+  // Определяем счёт: сначала из формы, иначе из долга
+  let accId = state.payingDebtAccountId;
+  if (!accId) {
+    const dAcc = getAccount(d.accountId);
+    accId = (dAcc && !dAcc.deleted) ? dAcc.id : (activeAccounts()[0] ? activeAccounts()[0].id : null);
+  }
+  if (!accId) { toast('Выбери счёт', 'err'); return; }
+
+  const isReturn = d.direction === 'to_me'; // мне возвращают — доход
+
+  // Обновляем долг
   d.paid += amount;
-  d.payments.push({ date, amount, comment: '' });
+  d.payments.push({ date, amount, comment: '', accountId: accId });
   if (d.paid >= d.amount) d.closed = true;
+
+  // Создаём автоматическую транзакцию
+  const categoryId = ensureDebtCategory(isReturn ? 'returned_to_me' : 'returned_by_me');
+  state.data.transactions.push({
+    id: uid(),
+    type: isReturn ? 'income' : 'expense',
+    accountId: accId,
+    categoryId: categoryId,
+    amount: amount,
+    date: date,
+    comment: (isReturn ? 'Возврат долга: ' : 'Возврат мной: ') + (d.counterparty || 'без имени'),
+    recurring: false,
+    createdAt: Date.now()
+  });
+
   state.payingDebt = null;
+  state.payingDebtAccountId = null;
   toast('Платёж записан', 'ok');
   renderAll();
   await save();
@@ -2066,7 +2224,7 @@ async function applyImport(parsed) {
 
   state.editingTxn = null; state.editingCat = null; state.editingAccount = null;
   state.editingDebt = null; state.editingRecurring = null;
-  state.payingRecurring = null; state.payingDebt = null;
+  state.payingRecurring = null; state.payingDebt = null; state.payingDebtAccountId = null;
   state._showJson = false; state._showPasteJson = false; state._pasteJsonValue = '';
 
   toast('Данные загружены', 'ok');
@@ -2111,7 +2269,7 @@ async function handleClearAll() {
   });
   state.editingTxn = null; state.editingCat = null; state.editingAccount = null;
   state.editingDebt = null; state.editingRecurring = null;
-  state.payingRecurring = null; state.payingDebt = null;
+  state.payingRecurring = null; state.payingDebt = null; state.payingDebtAccountId = null;
   state._showJson = false; state._showPasteJson = false; state._pasteJsonValue = '';
 
   toast('Все данные очищены', 'ok');
